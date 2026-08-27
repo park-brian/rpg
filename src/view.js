@@ -652,6 +652,34 @@ function play(root, seed) {
     panel.classList.remove('on');
   }
 
+  let lastJournalRendered = 0;
+  function updateActivePanel() {
+    if (!panelMode) return;
+    if (panelMode === 'me') {
+      const me = read(S, { person: focus });
+      const sub = panel.querySelector('.sub');
+      if (sub) {
+        sub.textContent = `${me.age} years · ${me.hours.toFixed(1)} h left today · ${me.act}`;
+      }
+      const bars = panel.querySelectorAll('.bar i');
+      if (bars && bars.length === 5) {
+        for (let i = 0; i < 5; i++) {
+          bars[i].style.width = Math.max(0, Math.min(100, me.needs[i])).toFixed(1) + '%';
+        }
+      }
+    } else if (panelMode === 'menu') {
+      const sub = panel.querySelector('.sub');
+      if (sub) {
+        sub.textContent = 'day ' + (1 + dayOf(S.time)) + ', ' + ['winter', 'spring', 'summer', 'autumn'][Math.floor(((doyOf(S.time) + 45) % 360) / 90)];
+      }
+    } else if (panelMode === 'journal') {
+      if (lastJournalRendered !== S.journal.length) {
+        lastJournalRendered = S.journal.length;
+        panel.innerHTML = `<h2>Journal</h2><div class="sub"></div>` + S.journal.slice(-30).reverse().map(j => `<div class="row"><span class="k">d${1 + dayOf(j.t)} ${hhmm(j.t)}</span> ${j.text}</div>`).join('');
+      }
+    }
+  }
+
   function hhmm(t) {
     const m = t % 1440 | 0;
     return String(m / 60 | 0).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
@@ -681,6 +709,7 @@ function play(root, seed) {
     draw(S, focus, real, rate);
     flushJournal();
     clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time);
+    updateActivePanel();
     syncSelSlot();
     if (!panelMode || panelMode === 'me') renderHands();
 
