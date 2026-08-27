@@ -7,19 +7,13 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const outputDirs = [
-  path.join(__dirname, '..', '..', 'artifacts', 'screenshots'),
-  'C:\\Users\\User\\.gemini\\antigravity-cli\\brain\\4aef3a96-930b-4d74-bd37-b49836451e2b'
-];
-
-outputDirs.forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
+const screenshotDir = path.join(__dirname, '..', '..', 'artifacts', 'screenshots');
+if (!fs.existsSync(screenshotDir)) {
+  fs.mkdirSync(screenshotDir, { recursive: true });
+}
 
 async function captureScreenshot(page, name) {
-  for (const dir of outputDirs) {
-    await page.screenshot({ path: path.join(dir, `${name}.png`) });
-  }
+  await page.screenshot({ path: path.join(screenshotDir, `${name}.png`) });
 }
 
 test.describe('Ford Simulation & Game E2E Browser Suite', () => {
