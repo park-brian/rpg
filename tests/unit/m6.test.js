@@ -1,8 +1,9 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
-  makeWorld, step, read, computeLOS, makeWorldWanderer, DATA
-} = require('../../src/game.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  makeWorld, step, read, makeWorldWanderer, DATA
+} from '../../src/sim.js';
+import { computeLOS } from '../../src/view.js';
 
 test('M6: Line-of-Sight (LOS) Field of View calculation', () => {
   assert.strictEqual(typeof computeLOS, 'function', 'computeLOS function must exist');

@@ -1,12 +1,9 @@
-'use strict';
-
-const sim = (typeof require !== 'undefined') ? require('./sim.js') : (typeof window !== 'undefined' ? window.simEngine || window : {});
-const {
+import {
   DATA, T, ACT, DIRS, MAXP, MAXT,
   idx, tileAt, count, held, hands, moveThing, ageYears,
   read, inject, step, cancelAct, hash, makeWorld, makeWorldWanderer,
   generateWorldChunk, dayOf, yearOf, doyOf, season, journal
-} = sim;
+} from './sim.js';
 
 const TILE_SIZE = 16;
 const TS = TILE_SIZE;
@@ -1053,9 +1050,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   }
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    drawThing, drawActIcon, computeLOS, makeRenderer,
-    play, runSim, runGen, runTests, boot
-  };
-}
+export {
+  drawThing, drawActIcon, computeLOS, makeRenderer,
+  play, runSim, runGen, runTests, boot
+};

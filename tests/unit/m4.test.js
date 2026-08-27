@@ -1,8 +1,8 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   DATA, T, ACT, makeWorld, step, inject, read, held, count, addThing, setTile, idx, addPerson
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('M4: Beasts as Persons in Unified SoA Store', () => {
   const { S } = makeWorld(401, false);

@@ -1,11 +1,15 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
-const { build } = require('../../build.js');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { build } from '../../build.js';
+import {
   makeWorld, step, inject, read, hash, DATA, T
-} = require('../../src/game.js');
+} from '../../src/sim.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 test('Build Verification: index.html is generated correctly and contains scripts', () => {
   build();

@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   createSim, makeWorld, idx, setTile, addPerson, addThing, held, count,
   ruleNeeds, ruleMove, ruleGo, affordances, chooseAct, applyAct, ruleBuild,
   ruleLand, rulePairing, ruleBirths, ruleArrivals, die, step,
   DATA, T, ACT
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('Rule 1: Needs Decay and Shelter Warmth', () => {
   const S = createSim(1);

@@ -1,7 +1,11 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-function build() {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export function build() {
   const templatePath = path.join(__dirname, 'src', 'template.html');
   const simJsPath = path.join(__dirname, 'src', 'sim.js');
   const viewJsPath = path.join(__dirname, 'src', 'view.js');
@@ -10,11 +14,13 @@ function build() {
   const distOutputPath = path.join(distDir, 'index.html');
 
   const template = fs.readFileSync(templatePath, 'utf8');
-  const simJs = fs.readFileSync(simJsPath, 'utf8');
+  let simJs = fs.readFileSync(simJsPath, 'utf8');
   let viewJs = fs.readFileSync(viewJsPath, 'utf8');
 
-  // Strip Node-specific require header from view.js since sim.js is concatenated directly above it
-  viewJs = viewJs.replace(/const sim = \(typeof require[\s\S]*?\} = sim;\n/m, '// [Core simulation engine functions loaded from sim.js above]\n');
+  // Strip module import/export lines for single-file browser bundle
+  simJs = simJs.replace(/^export\s*\{[\s\S]*?\};/m, '');
+  viewJs = viewJs.replace(/^import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/sim\.js['"];/m, '');
+  viewJs = viewJs.replace(/^export\s*\{[\s\S]*?\};/m, '');
 
   const bundledScript = `<script>\n${simJs}\n${viewJs}\n</script>`;
   const outputHtml = template.replace('<!-- GAME_SCRIPT -->', bundledScript);
@@ -28,8 +34,6 @@ function build() {
   console.log(`Successfully built ${outputPath} (${(outputHtml.length / 1024).toFixed(1)} KB)`);
 }
 
-if (require.main === module) {
+if (process.argv[1] === __filename) {
   build();
 }
-
-module.exports = { build };

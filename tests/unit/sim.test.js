@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   createSim, makeWorld, idx, setTile, tileAt, walkable, personAt, ageYears, addPerson,
   stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing,
   DATA, T
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('World initialization and grid connectivity', () => {
   const S = createSim(42, { w: 80, h: 48 });

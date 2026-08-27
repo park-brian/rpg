@@ -1,8 +1,8 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   DATA, T, makeRng, createSim, makeWorld, step, generateWorldChunk, getBiome
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('M5: Procedural Macro-Geography & Biome Classification', () => {
   assert.strictEqual(typeof getBiome, 'function', 'getBiome function must be exported');

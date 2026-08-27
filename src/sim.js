@@ -2442,28 +2442,26 @@ function loadState(simOrJson, maybeJson) {
   return sim;
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    DATA, T, ACT, DIRS, MAXP: MAX_PERSONS, MAXT: MAX_THINGS,
-    makeRng, Heap, fnv, hashArray, dayOf, yearOf, doyOf, season, growing,
-    createSim, idx, ensureConnected, setTile, tileAt, walkable, personAt, ageYears, addPerson,
-    stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing, journal,
-    regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
-    pathLen, adjacentFree, nearestTile, nearestScan, countTiles, household, findClaim,
-    plan, heuristic, goAct, ruleArrivals,
-    ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
-    dispatch, step, cancelAct, inject, read, hash,
-    makeWorld, makeWorldWanderer, getBiome, generateWorldChunk, saveState, loadState
-  };
-}
+export {
+  DATA, T, ACT, DIRS, MAX_PERSONS, MAX_THINGS, MAX_PERSONS as MAXP, MAX_THINGS as MAXT,
+  makeRng, Heap, fnv, hashArray, dayOf, yearOf, doyOf, season, growing,
+  createSim, idx, ensureConnected, setTile, tileAt, walkable, personAt, ageYears, addPerson,
+  stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing, journal,
+  gainSkill, wearTool, regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
+  pathLen, adjacentFree, nearestTile, nearestScan, countTiles, household, findClaim,
+  plan, heuristic, goAct, ruleArrivals,
+  ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
+  dispatch, step, cancelAct, inject, read, hash,
+  makeWorld, makeWorldWanderer, getBiome, generateWorldChunk, saveState, loadState
+};
 
 if (typeof window !== 'undefined') {
   window.simEngine = {
-    DATA, T, ACT, DIRS, MAXP: MAX_PERSONS, MAXT: MAX_THINGS,
+    DATA, T, ACT, DIRS, MAX_PERSONS, MAX_THINGS, MAXP: MAX_PERSONS, MAXT: MAX_THINGS,
     makeRng, Heap, fnv, hashArray, dayOf, yearOf, doyOf, season, growing,
     createSim, idx, ensureConnected, setTile, tileAt, walkable, personAt, ageYears, addPerson,
     stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing, journal,
-    regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
+    gainSkill, wearTool, regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
     pathLen, adjacentFree, nearestTile, nearestScan, countTiles, household, findClaim,
     plan, heuristic, goAct, ruleArrivals,
     ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,

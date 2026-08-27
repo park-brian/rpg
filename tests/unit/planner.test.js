@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   createSim, makeWorld, idx, setTile, addPerson, addThing, held, hands, count,
   plan, heuristic, inject, cancelAct, step,
   DATA, T, ACT
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('Input Planner: Queueing and Executing Player Intents', () => {
   const { S, player } = makeWorld(10);

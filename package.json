@@ -2,7 +2,8 @@
   "name": "ford-game",
   "version": "0.1.0",
   "description": "Simulation and emergent life game engine",
-  "main": "src/game.js",
+  "type": "module",
+  "main": "src/sim.js",
   "scripts": {
     "build": "node build.js",
     "test": "node --test tests/**/*.test.js",

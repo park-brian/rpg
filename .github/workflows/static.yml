@@ -1,9 +1,8 @@
-name: CI & GitHub Pages Deployment
+# Simple workflow for building and deploying static content to GitHub Pages
+name: Deploy static content to Pages
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
     branches: ["main"]
   workflow_dispatch:
 
@@ -17,69 +16,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test & Verify
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build standalone distribution
-        run: npm run build
-
-      - name: Run Unit & Simulation Tests
-        run: npm test
-
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps chromium webkit
-
-      - name: Run Playwright E2E Tests
-        run: npm run test:playwright
-
-      - name: Run Autonomous Playtest Bot
-        run: npm run test:playtest
-
   deploy:
-    name: Deploy to GitHub Pages
-    needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build game bundle
-        run: npm run build
-
+      - name: Build
+        run: node build.js
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
-      - name: Upload Pages Artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

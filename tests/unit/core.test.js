@@ -1,9 +1,9 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   makeRng, Heap, fnv, hashArray, hash, dayOf, yearOf, doyOf, season, growing,
   createSim, makeWorld, step, DATA
-} = require('../../src/game.js');
+} from '../../src/sim.js';
 
 test('makeRng: deterministic pseudo-random sequence from seed', () => {
   const rng1 = makeRng(12345);
