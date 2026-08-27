@@ -364,8 +364,13 @@ function makeRenderer(canvas) {
 function play(root, seed) {
   const { S, player } = makeWorld(seed);
   let focus = player;
-  let selSlot = -1;
+  let selIdx = -1;
   let speed = 1;
+
+  const getSelectedThingId = () => {
+    const h = hands(S, focus);
+    return (selIdx >= 0 && selIdx < h.length) ? h[selIdx] : -1;
+  };
 
   root.innerHTML = `
     <div id="world"><canvas id="c"></canvas><div id="toast"></div><div id="clock"></div>
@@ -401,18 +406,10 @@ function play(root, seed) {
   function hold(d) { inject(S, focus, { k: 'hold', d }); }
   function release(d) { inject(S, focus, { k: 'release', d }); }
 
-  function syncSelSlot() {
-    const h = hands(S, focus);
-    if (selSlot >= 0 && !h.includes(selSlot)) {
-      selSlot = -1;
-    }
-  }
-
   function actA() {
     release();
     if (panelMode) return panelConfirm();
-    syncSelSlot();
-    const list = read(S, { acts: focus, slot: selSlot });
+    const list = read(S, { acts: focus, slot: getSelectedThingId() });
     if (!list.length) return;
     const a = list[0];
     inject(S, focus, { k: 'act', slot: a.slot, target: a.tile, act: a.act });
@@ -424,8 +421,7 @@ function play(root, seed) {
   }
 
   function openActs() {
-    syncSelSlot();
-    const list = read(S, { acts: focus, slot: selSlot });
+    const list = read(S, { acts: focus, slot: getSelectedThingId() });
     panelMode = 'acts';
     panelSel = 0;
     panelItems = list.length
@@ -456,7 +452,7 @@ function play(root, seed) {
     if (panelMode) return closePanel();
     cancelAct(S, focus);
     work.style.display = 'none';
-    if (selSlot >= 0) { selSlot = -1; renderHands(); }
+    if (selIdx >= 0) { selIdx = -1; renderHands(); }
   }
 
   function startHold(d) {
@@ -529,26 +525,22 @@ function play(root, seed) {
 
   function selectSlot(i) {
     const h = hands(S, focus);
-    if (i < h.length) {
-      selSlot = (selSlot === h[i]) ? -1 : h[i];
-    } else {
-      selSlot = -1;
-    }
+    selIdx = (selIdx === i || i >= h.length) ? -1 : i;
     renderHands();
   }
 
   let handsSig = '';
   function renderHands() {
-    syncSelSlot();
     const h = hands(S, focus);
-    const sig = h.map(t => t + ':' + S.tqty[t]).join(',') + '|' + selSlot;
+    if (selIdx >= h.length) selIdx = -1;
+    const sig = h.map(t => t + ':' + S.tqty[t]).join(',') + '|' + selIdx;
     if (sig === handsSig) return;
     handsSig = sig;
     handsEl.innerHTML = '';
     const totalSlots = Math.max(7, h.length);
     for (let i = 0; i < totalSlots; i++) {
       const d = document.createElement('div');
-      d.className = 'slot' + (i < h.length && h[i] === selSlot ? ' sel' : '');
+      d.className = 'slot' + (i === selIdx && i < h.length ? ' sel' : '');
       if (i < h.length) {
         const t = h[i];
         d.textContent = DATA.STUFF[S.tstuff[t]].name + (S.tqty[t] > 1 ? ' ×' + S.tqty[t] : '');
@@ -710,11 +702,10 @@ function play(root, seed) {
     flushJournal();
     clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time);
     updateActivePanel();
-    syncSelSlot();
     if (!panelMode || panelMode === 'me') renderHands();
 
     {
-      const l = read(S, { acts: focus, slot: selSlot });
+      const l = read(S, { acts: focus, slot: getSelectedThingId() });
       const a = l[0];
       hint.textContent = a ? a.label : '';
       hint.style.opacity = (a && !panelMode) ? 1 : 0;
@@ -743,13 +734,17 @@ function play(root, seed) {
       S, player: focus,
       getFocus: () => focus,
       setFocus: (id) => { focus = id; },
-      getSelSlot: () => selSlot,
-      setSelSlot: (s) => { selSlot = s; renderHands(); },
+      getSelSlot: () => getSelectedThingId(),
+      setSelSlot: (s) => {
+        const h = hands(S, focus);
+        selIdx = h.indexOf(s);
+        renderHands();
+      },
       getSpeed: () => speed,
       setSpeed: (sp) => { speed = sp; },
       inspect: () => {
         const pState = read(S, { person: focus });
-        const availActs = read(S, { acts: focus, slot: selSlot });
+        const availActs = read(S, { acts: focus, slot: getSelectedThingId() });
         const facingTile = (() => {
           const [dx, dy] = DIRS[S.pface[focus]];
           const nx = S.px[focus] + dx, ny = S.py[focus] + dy;

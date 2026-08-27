@@ -1334,6 +1334,17 @@ function ruleGo(sim, personId, targetTile) {
   return distance * DATA.WALK_MIN;
 }
 
+function validHeld(sim, personId, slot) {
+  if (slot === undefined || slot < 0) return -1;
+  const h = hands(sim, personId);
+  if (slot < h.length && h[slot] !== undefined) {
+    const id = h[slot];
+    if (sim.tholderKind[id] === 1 && sim.tholder[id] === personId && sim.tqty[id] > 0) return id;
+  }
+  if (sim.tholderKind[slot] === 1 && sim.tholder[slot] === personId && sim.tqty[slot] > 0) return slot;
+  return -1;
+}
+
 function affordances(sim, personId, targetTile, onlySlot) {
   const affordanceList = [];
   const tile = sim.tiles[targetTile];
@@ -1342,12 +1353,7 @@ function affordances(sim, personId, targetTile, onlySlot) {
   let otherPerson = personAt(sim, tx, ty) - 1;
   if (otherPerson === personId) otherPerson = -1;
 
-  let selectedSlot = (onlySlot !== undefined && onlySlot >= 0) ? onlySlot : -1;
-  // Guard: If selectedSlot is not currently held in person's hands, treat as empty hands
-  if (selectedSlot >= 0 && (sim.tholderKind[selectedSlot] !== 1 || sim.tholder[selectedSlot] !== personId || sim.tqty[selectedSlot] <= 0)) {
-    selectedSlot = -1;
-  }
-
+  const selectedSlot = validHeld(sim, personId, onlySlot);
   const add = (act, label, slot) => affordanceList.push({ act, label, slot: slot === undefined ? -1 : slot, tile: targetTile });
 
   // 1. Direct hand tool actions (eat, drink, fill, bandage)
@@ -1571,21 +1577,28 @@ function applyAct(sim, personId, targetTile, action) {
       return actRes('talk');
     }
     case 'drop': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
       const here = idx(sim, sim.px[personId], sim.py[personId]);
-      moveThing(sim, slot, here, 2, 1);
-      journal(sim, `${sim.pname[personId]} set down ${DATA.STUFF[sim.tstuff[slot]].name} on the ground.`);
+      moveThing(sim, validSlot, here, 2, 1);
+      journal(sim, `${sim.pname[personId]} set down ${DATA.STUFF[sim.tstuff[validSlot]].name} on the ground.`);
       return actRes('store');
     }
     case 'fill': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
       journal(sim, `${sim.pname[personId]} filled the waterskin from the fresh stream.`);
       return actRes('take');
     }
     case 'drink': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
-      sim.pneeds[personId * 5 + 3] = Math.min(100, sim.pneeds[personId * 5 + 3] + 15);
-      journal(sim, `${sim.pname[personId]} drank fresh water from the waterskin.`);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot >= 0 && sim.tstuff[validSlot] === 'waterskin') {
+        sim.pneeds[personId * 5 + 3] = Math.min(100, sim.pneeds[personId * 5 + 3] + 15);
+        journal(sim, `${sim.pname[personId]} drank fresh water from the waterskin.`);
+        return actRes('eat');
+      }
+      sim.pneeds[personId * 5 + 3] = Math.min(100, sim.pneeds[personId * 5 + 3] + 10);
+      journal(sim, `${sim.pname[personId]} drank fresh water.`);
       return actRes('eat');
     }
     case 'enter': {
@@ -1601,7 +1614,9 @@ function applyAct(sim, personId, targetTile, action) {
       return { min: 0.2, act: ACT.idle, open: 'inspect', site: targetTile };
 
     case 'store': {
-      moveThing(sim, slot, targetTile, 2);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      moveThing(sim, validSlot, targetTile, 2);
       if (tile !== T.hut && !sim.projects.has(targetTile)) {
         sim.projects.set(targetTile, { log: DATA.HUT.log, thatch: DATA.HUT.thatch, work: 0 });
         setTile(sim, targetTile, T.frame);
@@ -1609,35 +1624,41 @@ function applyAct(sim, personId, targetTile, action) {
       return actRes('store');
     }
     case 'take': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
+      if (slot < 0 || sim.tholderKind[slot] !== 2 || sim.tqty[slot] <= 0 || hands(sim, personId).length >= 7) {
+        return { min: 0, act: ACT.idle };
+      }
       moveThing(sim, slot, personId, 1);
       journal(sim, `${sim.pname[personId]} picked up ${DATA.STUFF[sim.tstuff[slot]].name}.`);
       return actRes('take');
     }
     case 'mill': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       addThing(sim, { stuff: 'flour', qty: 2, holder: personId, holderKind: 1 });
       journal(sim, `${sim.pname[personId]} ground grain into flour.`);
       return actRes('mill');
     }
     case 'bake': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       addThing(sim, { stuff: 'bread', qty: 1, holder: personId, holderKind: 1 });
       journal(sim, `${sim.pname[personId]} baked bread.`);
       return actRes('bake');
     }
     case 'fence': {
-      if (slot < 0 || sim.tqty[slot] <= 0 || tile !== T.grass) return { min: 0, act: ACT.idle };
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0 || tile !== T.grass) return { min: 0, act: ACT.idle };
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       setTile(sim, targetTile, T.fence);
       journal(sim, `${sim.pname[personId]} put up a fence.`);
       return actRes('fence');
     }
     case 'bandage': {
-      if (slot >= 0 && sim.tqty[slot] > 0) {
-        setQty(sim, slot, sim.tqty[slot] - 1);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot >= 0) {
+        setQty(sim, validSlot, sim.tqty[validSlot] - 1);
         for (let r = 0; r < 6; r++) {
           if (sim.pwounds[personId * 6 + r] > 0) {
             sim.pwounds[personId * 6 + r] = Math.max(0, sim.pwounds[personId * 6 + r] - 0.5);
@@ -1653,7 +1674,8 @@ function applyAct(sim, personId, targetTile, action) {
     case 'attack': {
       const other = personAt(sim, tx, ty) - 1;
       if (other < 0 || other === personId || !sim.palive[other]) return { min: 0, act: ACT.idle };
-      const weapon = slot >= 0 ? DATA.STUFF[sim.tstuff[slot]] : null;
+      const validSlot = validHeld(sim, personId, slot);
+      const weapon = validSlot >= 0 ? DATA.STUFF[sim.tstuff[validSlot]] : null;
       const basePower = weapon && weapon.tool === 'axe' ? 0.4 : weapon && weapon.tool === 'bow' ? 0.35 : weapon && weapon.tool === 'knife' ? 0.25 : 0.15;
       const power = basePower * (1 + (sim.pskills[personId * 12 + 9] || 0) / 100);
       const hitRegion = sim.rng.int(6);
@@ -1686,16 +1708,19 @@ function applyAct(sim, personId, targetTile, action) {
       return actRes('cast');
     }
     case 'eat': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
-      const foodDef = DATA.STUFF[sim.tstuff[slot]];
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      const foodDef = DATA.STUFF[sim.tstuff[validSlot]];
+      if (!foodDef || foodDef.kind !== 'food') return { min: 0, act: ACT.idle };
       sim.pneeds[personId * 5] = Math.min(100, sim.pneeds[personId * 5] + foodDef.food);
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       journal(sim, `${sim.pname[personId]} ate ${foodDef.name}.`);
       return actRes('eat');
     }
     case 'chop': {
       if (tile !== T.tree) return { min: 0, act: ACT.idle };
-      if (slot >= 0) wearTool(sim, slot, 0.03);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot >= 0) wearTool(sim, validSlot, 0.03);
       gainSkill(sim, personId, 1, 0.08);
       setTile(sim, targetTile, T.grass);
       sim.tstate[targetTile] = 0;
@@ -1713,22 +1738,25 @@ function applyAct(sim, personId, targetTile, action) {
       return actRes('thatch');
     }
     case 'till': {
-      if (tile !== T.grass) return { min: 0, act: ACT.idle };
-      if (slot >= 0) wearTool(sim, slot, 0.02);
+      if (tile !== T.grass && tile !== T.tilled) return { min: 0, act: ACT.idle };
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot >= 0) wearTool(sim, validSlot, 0.02);
       gainSkill(sim, personId, 0, 0.06);
       setTile(sim, targetTile, T.tilled);
       return actRes('till');
     }
     case 'sow': {
-      if (slot < 0 || sim.tqty[slot] <= 0 || tile !== T.tilled) return { min: 0, act: ACT.idle };
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0 || tile !== T.tilled) return { min: 0, act: ACT.idle };
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       setTile(sim, targetTile, T.crop);
       sim.tstate[targetTile] = sim.time;
       return actRes('sow');
     }
     case 'harvest': {
       if (tile !== T.ripe) return { min: 0, act: ACT.idle };
-      if (slot >= 0) wearTool(sim, slot, 0.02);
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot >= 0) wearTool(sim, validSlot, 0.02);
       gainSkill(sim, personId, 0, 0.05);
       const parcelIdx = ((ty >> 5) * sim.PW) + (tx >> 5);
       const yieldQty = Math.max(1, Math.round(DATA.CROP.yieldBase * sim.psoil[parcelIdx] * Math.min(1.2, sim.rain[yearOf(sim.tstate[targetTile])] || 1)));
@@ -1738,9 +1766,10 @@ function applyAct(sim, personId, targetTile, action) {
       return actRes('harvest');
     }
     case 'whittle': {
-      if (slot < 0 || sim.tqty[slot] <= 0) return { min: 0, act: ACT.idle };
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
       gainSkill(sim, personId, 2, 0.1);
-      setQty(sim, slot, sim.tqty[slot] - 1);
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       addThing(sim, { stuff: 'spade', holder: personId, holderKind: 1 });
       journal(sim, `${sim.pname[personId]} whittled a spade.`);
       return actRes('whittle');
