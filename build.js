@@ -18,11 +18,12 @@ export function build() {
   let viewJs = fs.readFileSync(viewJsPath, 'utf8');
 
   // Strip module import/export lines for single-file browser bundle
-  simJs = simJs.replace(/^export\s*\{[\s\S]*?\};/m, '');
-  viewJs = viewJs.replace(/^import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/sim\.js['"];/m, '');
-  viewJs = viewJs.replace(/^export\s*\{[\s\S]*?\};/m, '');
+  const simJsClean = simJs.replace(/^export\s*\{[\s\S]*?\};/m, '');
+  const viewJsClean = viewJs
+    .replace(/^import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/sim\.js['"];/m, '')
+    .replace(/^export\s*\{[\s\S]*?\};/m, '');
 
-  const bundledScript = `<script>\n${simJs}\n${viewJs}\n</script>`;
+  const bundledScript = `<script>\nwindow.__SIM_SRC__ = ${JSON.stringify(simJsClean)};\n${simJsClean}\n${viewJsClean}\n</script>`;
   const outputHtml = template.replace('<!-- GAME_SCRIPT -->', bundledScript);
 
   fs.writeFileSync(outputPath, outputHtml, 'utf8');

@@ -719,7 +719,8 @@ function tradeOffer(sim, sellerId, buyerId, stuffName, quantity) {
   const buyerWorth = worthTo(sim, buyerId, stuffName);
   const ask = Math.max(1, Math.round(sellerWorth * quantity));
   const bid = Math.max(1, Math.round(buyerWorth * quantity));
-  const buyerPennies = count(sim, 1, buyerId, 'penny');
+  const buyerHome = sim.phome[buyerId];
+  const buyerPennies = count(sim, 1, buyerId, 'penny') + (buyerHome >= 0 ? count(sim, 2, buyerHome, 'penny') : 0);
   const agreedPrice = Math.min(buyerPennies, Math.max(1, Math.round((ask + bid) / 2)));
   return { stuff: stuffName, qty: quantity, ask: agreedPrice, bid, coin: buyerPennies, ok: buyerPennies >= 1 && buyerPennies >= agreedPrice };
 }
@@ -728,7 +729,11 @@ function doTrade(sim, sellerId, buyerId, stuffName, quantity, price) {
   const sellerThing = held(sim, 1, sellerId, stuffName);
   if (sellerThing < 0 || sim.tqty[sellerThing] < quantity) return false;
 
-  const buyerCoin = held(sim, 1, buyerId, 'penny');
+  const buyerHome = sim.phome[buyerId];
+  let buyerCoin = held(sim, 1, buyerId, 'penny');
+  if (buyerCoin < 0 || sim.tqty[buyerCoin] < price) {
+    if (buyerHome >= 0) buyerCoin = held(sim, 2, buyerHome, 'penny');
+  }
   if (buyerCoin < 0 || sim.tqty[buyerCoin] < price) return false;
 
   moveThing(sim, sellerThing, buyerId, 1, quantity);
@@ -1052,7 +1057,8 @@ function plan(sim, personId) {
 function goAct(sim, personId, tileIndex, actName, slot) {
   const tx = tileIndex % sim.W;
   const ty = (tileIndex / sim.W) | 0;
-  if (Math.abs(sim.px[personId] - tx) + Math.abs(sim.py[personId] - ty) === 1) {
+  const dist = Math.abs(sim.px[personId] - tx) + Math.abs(sim.py[personId] - ty);
+  if (dist <= 1) {
     return { k: 'act', slot, target: tileIndex, act: actName };
   }
   return { k: 'go', to: adjacentFree(sim, tx, ty, sim.px[personId], sim.py[personId]), for: tileIndex };
@@ -1135,6 +1141,7 @@ function evalNutrition(sim, personId) {
   const foodInHand = held(sim, 1, personId, 'bread') >= 0 ? held(sim, 1, personId, 'bread') :
                      held(sim, 1, personId, 'roast_meat') >= 0 ? held(sim, 1, personId, 'roast_meat') :
                      held(sim, 1, personId, 'berries') >= 0 ? held(sim, 1, personId, 'berries') :
+                     held(sim, 1, personId, 'grain') >= 0 ? held(sim, 1, personId, 'grain') :
                      held(sim, 1, personId, 'food');
   if (foodInHand >= 0) return { k: 'act', slot: foodInHand, act: 'eat' };
 
@@ -1144,6 +1151,7 @@ function evalNutrition(sim, personId) {
     const foodInStore = held(sim, 2, home, 'bread') >= 0 ? held(sim, 2, home, 'bread') :
                         held(sim, 2, home, 'roast_meat') >= 0 ? held(sim, 2, home, 'roast_meat') :
                         held(sim, 2, home, 'berries') >= 0 ? held(sim, 2, home, 'berries') :
+                        held(sim, 2, home, 'grain') >= 0 ? held(sim, 2, home, 'grain') :
                         held(sim, 2, home, 'food');
     if (foodInStore >= 0) {
       return isAtHome
@@ -1166,7 +1174,8 @@ function evalNutrition(sim, personId) {
         if (isFriendly) {
           const friendFood = held(sim, 2, hh.home, 'bread') >= 0 ? held(sim, 2, hh.home, 'bread') :
                             held(sim, 2, hh.home, 'roast_meat') >= 0 ? held(sim, 2, hh.home, 'roast_meat') :
-                            held(sim, 2, hh.home, 'berries') >= 0 ? held(sim, 2, hh.home, 'berries') : -1;
+                            held(sim, 2, hh.home, 'berries') >= 0 ? held(sim, 2, hh.home, 'berries') :
+                            held(sim, 2, hh.home, 'grain') >= 0 ? held(sim, 2, hh.home, 'grain') : -1;
           if (friendFood >= 0) {
             const isAtFriendHome = dist <= 1;
             return isAtFriendHome
@@ -1289,23 +1298,26 @@ function evalFoodProcessing(sim, personId, home, isAtHome, hasHut) {
   if (hasHut) {
     const hearth = getHearth(sim, home);
     const isLit = hearth && hearth.litUntil > sim.time;
+    const hasFuel = isLit || count(sim, 2, home, 'log') > 0 || count(sim, 2, home, 'firewood') > 0 || held(sim, 1, personId, 'log') >= 0 || held(sim, 1, personId, 'firewood') >= 0;
 
     // 1. Bake dough in lit hearth
     if (held(sim, 1, personId, 'dough') >= 0) {
       if (isLit) return { k: 'act', slot: held(sim, 1, personId, 'dough'), act: 'bake' };
-      const logInHand = held(sim, 1, personId, 'log');
+      const logInHand = held(sim, 1, personId, 'log') >= 0 ? held(sim, 1, personId, 'log') : held(sim, 1, personId, 'firewood');
       if (logInHand >= 0) return { k: 'act', slot: logInHand, act: 'stoke' };
-      const logInStore = held(sim, 2, home, 'log');
+      const logInStore = held(sim, 2, home, 'log') >= 0 ? held(sim, 2, home, 'log') : held(sim, 2, home, 'firewood');
       if (logInStore >= 0 && isAtHome) return { k: 'take', t: logInStore, qty: 1 };
+      if (isAtHome) return { k: 'store', t: held(sim, 1, personId, 'dough') };
     }
 
-    // 2. Knead flour into dough
+    // 2. Knead flour into dough (only if fuel/hearth is available to bake it)
     if (held(sim, 1, personId, 'flour') >= 0) {
-      return { k: 'act', slot: held(sim, 1, personId, 'flour'), act: 'knead' };
+      if (hasFuel) return { k: 'act', slot: held(sim, 1, personId, 'flour'), act: 'knead' };
+      if (isAtHome) return { k: 'store', t: held(sim, 1, personId, 'flour') };
     }
 
-    // 3. Mill grain and bake if bread is low
-    if (isAtHome && count(sim, 2, home, 'grain') > 600 && count(sim, 2, home, 'bread') < 4) {
+    // 3. Mill grain and bake if bread is low and fuel is available
+    if (isAtHome && count(sim, 2, home, 'grain') > 300 && count(sim, 2, home, 'bread') < 4 && hasFuel) {
       if (!isLit && count(sim, 2, home, 'log') > 0) {
         const logInHand = held(sim, 1, personId, 'log');
         if (logInHand >= 0) return { k: 'act', slot: logInHand, act: 'stoke' };
@@ -1436,12 +1448,15 @@ function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
   const inHandGrain = held(sim, 1, personId, 'grain');
 
   if (sim.households.length > 1 && sim.season > 0.3) {
-    if (storeGrain > 400 || (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 3)) {
+    if (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 3) {
       let buyerId = -1;
       let bestDist = 25;
       for (let q = 0; q < sim.pn; q++) {
-        if (!sim.palive[q] || sim.phome[q] === home || sim.phome[q] < 0) continue;
-        if (count(sim, 1, q, 'penny') < 2) continue;
+        if (!sim.palive[q] || q === personId) continue;
+        const buyerCoins = count(sim, 1, q, 'penny') + (sim.phome[q] >= 0 ? count(sim, 2, sim.phome[q], 'penny') : 0);
+        if (buyerCoins < 2) continue;
+        const lastTraded = sim.lastDeal.get(dealKey(personId, q)) || 0;
+        if (sim.time - lastTraded < 1440) continue;
         const d = Math.abs(sim.px[q] - sim.px[personId]) + Math.abs(sim.py[q] - sim.py[personId]);
         if (d < bestDist) {
           bestDist = d;
@@ -1449,12 +1464,32 @@ function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
         }
       }
       if (buyerId >= 0) {
-        if (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 3) {
-          const near = Math.abs(sim.px[buyerId] - sim.px[personId]) + Math.abs(sim.py[buyerId] - sim.py[personId]);
-          return near <= 1
-            ? { k: 'act', slot: inHandGrain, target: idx(sim, sim.px[buyerId], sim.py[buyerId]), act: 'sell' }
-            : { k: 'go', to: adjacentFree(sim, sim.px[buyerId], sim.py[buyerId], sim.px[personId], sim.py[personId]), for: idx(sim, sim.px[buyerId], sim.py[buyerId]) };
+        const near = Math.abs(sim.px[buyerId] - sim.px[personId]) + Math.abs(sim.py[buyerId] - sim.py[personId]);
+        return near <= 1
+          ? { k: 'act', slot: inHandGrain, target: idx(sim, sim.px[buyerId], sim.py[buyerId]), act: 'sell' }
+          : { k: 'go', to: adjacentFree(sim, sim.px[buyerId], sim.py[buyerId], sim.px[personId], sim.py[personId]), for: idx(sim, sim.px[buyerId], sim.py[buyerId]) };
+      } else {
+        return isAtHome ? { k: 'store', t: inHandGrain } : toHome;
+      }
+    } else if (storeGrain > 400) {
+      const lastTradeTime = sim.lastDeal.get(personId) || 0;
+      if (sim.time - lastTradeTime < 1440) return null;
+      let buyerId = -1;
+      let bestDist = 25;
+      for (let q = 0; q < sim.pn; q++) {
+        if (!sim.palive[q] || q === personId) continue;
+        const buyerCoins = count(sim, 1, q, 'penny') + (sim.phome[q] >= 0 ? count(sim, 2, sim.phome[q], 'penny') : 0);
+        if (buyerCoins < 2) continue;
+        const lastTraded = sim.lastDeal.get(dealKey(personId, q)) || 0;
+        if (sim.time - lastTraded < 1440) continue;
+        const d = Math.abs(sim.px[q] - sim.px[personId]) + Math.abs(sim.py[q] - sim.py[personId]);
+        if (d < bestDist) {
+          bestDist = d;
+          buyerId = q;
         }
+      }
+      if (buyerId >= 0) {
+        sim.lastDeal.set(personId, sim.time);
         const storeGrainRef = held(sim, 2, home, 'grain');
         if (storeGrainRef >= 0 && isAtHome) return { k: 'take', t: storeGrainRef, qty: 3 };
         if (storeGrainRef >= 0) return toHome;
@@ -1487,7 +1522,7 @@ function evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHo
   // 2. Sowing and tilling
   if (growing(sim.time) && doyOf(sim.time) < 150) {
     const grainInHand = held(sim, 1, personId, 'grain');
-    const tilledTile = (sim.tileCount[T.tilled] && storeStock < requiredFood * 1.5)
+    const tilledTile = sim.tileCount[T.tilled]
       ? nearestTile(sim, personId, (x, y, i) => sim.tiles[i] === T.tilled && Math.abs(x - homeX) + Math.abs(y - homeY) < 20, 28, 4)
       : -1;
 
@@ -1501,12 +1536,12 @@ function evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHo
     }
 
     const spade = held(sim, 1, personId, 'spade');
-    const desiredFields = Math.ceil(requiredFood / (DATA.CROP.yieldBase * 0.7));
-    const activeFields = spade >= 0 && storeStock < requiredFood
+    const desiredFields = Math.max(3, Math.ceil(requiredFood / (DATA.CROP.yieldBase * 0.7)));
+    const activeFields = spade >= 0
       ? countTiles(sim, homeX, homeY, 9, i => sim.tiles[i] === T.tilled || sim.tiles[i] === T.crop || sim.tiles[i] === T.ripe)
       : 1e9;
 
-    if (spade >= 0 && activeFields < desiredFields && storeStock < requiredFood) {
+    if (spade >= 0 && activeFields < desiredFields) {
       const grassTile = nearestTile(sim, personId, (x, y, i) => sim.tiles[i] === T.grass && Math.abs(x - homeX) > 1 && Math.abs(y - homeY) > 1 && Math.abs(x - homeX) + Math.abs(y - homeY) < 16, 16, 5);
       if (grassTile >= 0) return goAct(sim, personId, grassTile, 'till', spade);
     }
@@ -1567,11 +1602,11 @@ function heuristic(sim, personId) {
   evalSurplusStorage(sim, personId, home, homeX, homeY, hasHut);
 
   return evalFoodProcessing(sim, personId, home, isAtHome, hasHut)
+    || evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHome, dropToStore, members)
     || evalPublicWorks(sim, personId, home, homeX, homeY, isAtHome, toHome, hasHut)
     || evalHutConstruction(sim, personId, home, isAtHome, toHome, dropToStore, hasHut, isHungryHousehold)
     || evalSpadeCrafting(sim, personId, hasHut)
     || evalMarketTrade(sim, personId, home, isAtHome, toHome, members)
-    || evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHome, dropToStore, members)
     || { k: 'wait', min: 30 + sim.rng.int(60), act: ACT.idle };
 }
 
@@ -1941,6 +1976,7 @@ function applyAct(sim, personId, targetTile, action) {
       const quantity = Math.min(20, sim.tqty[slot]);
       const offer = tradeOffer(sim, personId, other, stuff, quantity);
       if (offer.ok) doTrade(sim, personId, other, stuff, quantity, offer.ask);
+      else sim.lastDeal.set(dealKey(personId, other), sim.time);
       return actRes('talk');
     }
     case 'offer': {
@@ -2408,7 +2444,9 @@ function ruleBirths(sim) {
 }
 
 function ruleArrivals(sim) {
-  if (sim.pn >= 40 || sim.households.length >= 6) return;
+  let livingPop = 0;
+  for (let p = 0; p < sim.pn; p++) if (sim.palive[p]) livingPop++;
+  if (livingPop >= 25 || sim.households.length >= 6) return;
   const dayOfYear = doyOf(sim.time);
   if (dayOfYear < 50 || dayOfYear > 110) return;
 
@@ -2543,7 +2581,7 @@ function dispatch(sim, event) {
           dt = ruleGo(sim, personId, intent.to);
           if (!dt) {
             if (intent.for >= 0) sim.bad.add(intent.for);
-            dt = 1;
+            dt = 5;
           }
           actType = ACT.walk;
         } else if (intent.k === 'act') {
@@ -2553,7 +2591,7 @@ function dispatch(sim, event) {
             actType = ACT[chosen.act] ?? ACT.idle;
             sim.heap.push(sim.time + dt, { k: 'do', a: personId, ti: chosen.ti, act: chosen.act, slot: chosen.slot, seq: sim.pplanSeq[personId] });
           } else {
-            dt = 0.05;
+            dt = 5;
           }
         } else if (intent.k === 'take') {
           moveThing(sim, intent.t, personId, 1, intent.qty);
@@ -2979,8 +3017,8 @@ async function makeWorldWandererAsync(seed, prerollYears = 40, onProgress = null
   return { S, player, home };
 }
 
-function saveState(sim) {
-  return JSON.stringify({
+function saveState(sim, asObject = false) {
+  const obj = {
     time: sim.time,
     pn: sim.pn,
     tn: sim.tn,
@@ -3018,14 +3056,19 @@ function saveState(sim) {
     rain: sim.rain,
     trades: sim.trades,
     tradeValue: sim.tradeValue,
-    deaths: sim.deaths
-  });
+    deaths: sim.deaths,
+    journal: sim.journal.slice(-30)
+  };
+  return asObject ? obj : JSON.stringify(obj);
 }
 
 function loadState(simOrJson, maybeJson) {
-  const jsonString = typeof simOrJson === 'string' ? simOrJson : maybeJson;
-  const data = JSON.parse(jsonString);
-  const sim = (typeof simOrJson === 'object' && simOrJson !== null) ? simOrJson : createSim(1);
+  const data = typeof simOrJson === 'string' ? JSON.parse(simOrJson) :
+               typeof maybeJson === 'string' ? JSON.parse(maybeJson) :
+               (typeof maybeJson === 'object' && maybeJson !== null) ? maybeJson :
+               (typeof simOrJson === 'object' && simOrJson !== null && !simOrJson.px) ? simOrJson : null;
+  const sim = (typeof simOrJson === 'object' && simOrJson !== null && simOrJson.px) ? simOrJson : createSim(1);
+  if (!data) return sim;
   sim.time = data.time;
   sim.pn = data.pn;
   sim.tn = data.tn;

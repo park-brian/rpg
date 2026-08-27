@@ -1077,6 +1077,54 @@ function initGame(root, S, player) {
   }
 }
 
+function createGenesisWorker() {
+  if (typeof Worker === 'undefined' || typeof Blob === 'undefined') return null;
+  try {
+    const simCode = (typeof window !== 'undefined' && window.__SIM_SRC__) ? window.__SIM_SRC__ : '';
+    if (!simCode) return null;
+    const workerScript = `
+      ${simCode}
+      self.onmessage = function(e) {
+        const { seed, prerollYears } = e.data;
+        try {
+          const { S, home } = makeWorld(seed, false);
+          const YEAR = DATA.DAYS_PER_YEAR * 1440;
+          let lastPost = performance.now();
+
+          for (let y = 1; y <= prerollYears; y++) {
+            step(S, S.time + YEAR);
+            const now = performance.now();
+            if (now - lastPost > 20 || y === prerollYears) {
+              lastPost = now;
+              const m = read(S, 'metrics');
+              const recentJournals = S.journal.slice(-4);
+              self.postMessage({ type: 'PROGRESS', year: y, totalYears: prerollYears, metrics: m, journals: recentJournals });
+            }
+          }
+
+          const roadY = S.H >> 1;
+          const player = addPerson(S, { name: 'You', x: 2, y: roadY, planner: 1, age: 24 });
+          addThing(S, { stuff: 'axe', holder: player, holderKind: 1 });
+          addThing(S, { stuff: 'knife', holder: player, holderKind: 1 });
+          addThing(S, { stuff: 'waterskin', holder: player, holderKind: 1 });
+          addThing(S, { stuff: 'bread', qty: 2, holder: player, holderKind: 1 });
+          addThing(S, { stuff: 'penny', qty: 10, holder: player, holderKind: 1 });
+          journal(S, 'After ' + prerollYears + ' years of history, a wanderer arrives on the road from the west.');
+
+          const stateObj = saveState(S, true);
+          self.postMessage({ type: 'COMPLETE', state: stateObj, player });
+        } catch (err) {
+          self.postMessage({ type: 'ERROR', error: err.message });
+        }
+      };
+    `;
+    const blob = new Blob([workerScript], { type: 'application/javascript' });
+    return new Worker(URL.createObjectURL(blob));
+  } catch (e) {
+    return null;
+  }
+}
+
 function play(root, seed, opts = {}) {
   const q = new URLSearchParams(typeof location !== 'undefined' ? (location.search || '').replace(/^\?/, '') : '');
   const preroll = opts.preroll !== undefined ? opts.preroll : (q.has('preroll') ? +q.get('preroll') : (q.has('years') ? +q.get('years') : 40));
@@ -1098,7 +1146,7 @@ function play(root, seed, opts = {}) {
           <span id="gen-pct-label" style="color:var(--ember)">0%</span>
         </div>
         <div style="width:100%;height:8px;background:#3a4150;border-radius:4px;overflow:hidden;">
-          <div id="gen-bar" style="width:0%;height:100%;background:var(--ember);transition:width .1s ease-out;"></div>
+          <div id="gen-bar" style="width:0%;height:100%;background:var(--ember);transition:width .08s ease-out;"></div>
         </div>
       </div>
 
@@ -1122,7 +1170,7 @@ function play(root, seed, opts = {}) {
   const grainEl = root.querySelector('#gen-grain');
   const chronicleEl = root.querySelector('#gen-chronicle');
 
-  makeWorldWandererAsync(seed, preroll, (progress) => {
+  const onProgress = (progress) => {
     const pct = Math.round((progress.year / progress.totalYears) * 100);
     if (yearLabel) yearLabel.textContent = `Year ${progress.year} of ${progress.totalYears}`;
     if (pctLabel) pctLabel.textContent = `${pct}%`;
@@ -1133,9 +1181,38 @@ function play(root, seed, opts = {}) {
     if (chronicleEl && progress.journals && progress.journals.length) {
       chronicleEl.innerHTML = progress.journals.map(j => `<div>${j}</div>`).join('');
     }
-  }).then(({ S, player }) => {
-    initGame(root, S, player);
-  });
+  };
+
+  const worker = createGenesisWorker();
+  if (worker) {
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'PROGRESS') {
+        onProgress(msg);
+      } else if (msg.type === 'COMPLETE') {
+        worker.terminate();
+        const S = createSim();
+        loadState(S, msg.state);
+        initGame(root, S, msg.player);
+      } else if (msg.type === 'ERROR') {
+        worker.terminate();
+        makeWorldWandererAsync(seed, preroll, onProgress).then(({ S, player }) => {
+          initGame(root, S, player);
+        });
+      }
+    };
+    worker.onerror = () => {
+      worker.terminate();
+      makeWorldWandererAsync(seed, preroll, onProgress).then(({ S, player }) => {
+        initGame(root, S, player);
+      });
+    };
+    worker.postMessage({ seed, prerollYears: preroll });
+  } else {
+    makeWorldWandererAsync(seed, preroll, onProgress).then(({ S, player }) => {
+      initGame(root, S, player);
+    });
+  }
 }
 
 
