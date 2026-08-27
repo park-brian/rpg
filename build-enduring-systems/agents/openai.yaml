@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Enduring Systems"
+  short_description: "Prefer direct changes; escalate on evidence"
+  default_prompt: "Use $build-enduring-systems to keep this change direct unless current evidence proves that one consequential boundary must be handled."

@@ -2975,6 +2975,7 @@ function saveState(sim) {
     tholderKind: Array.from(sim.tholderKind.subarray(0, sim.tn)),
     tiles: Array.from(sim.tiles),
     tstate: Array.from(sim.tstate),
+    hearths: Array.from(sim.hearths.entries()),
     rain: sim.rain,
     trades: sim.trades,
     tradeValue: sim.tradeValue,
@@ -3012,6 +3013,7 @@ function loadState(simOrJson, maybeJson) {
   if (data.debt) sim.debt = new Map(data.debt);
   if (data.board) sim.board = data.board;
   if (data.projects) sim.projects = new Map(data.projects);
+  if (data.hearths) sim.hearths = new Map(data.hearths);
   sim.tqty.set(data.tqty);
   sim.tstuff = data.tstuff;
   if (data.twear) sim.twear.set(data.twear);
@@ -3048,6 +3050,7 @@ export {
   stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing, journal,
   gainSkill, wearTool, regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
   pathLen, adjacentFree, nearestTile, nearestScan, countTiles, household, findClaim,
+  hasLineOfSight, getKinshipRelation, checkAccessPermission, getHearth,
   plan, heuristic, goAct, ruleArrivals,
   ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
   dispatch, step, cancelAct, inject, read, hash,
@@ -3062,6 +3065,7 @@ if (typeof window !== 'undefined') {
     stockKey, stockOf, stockAdd, setQty, setHolder, addThing, held, hands, count, moveThing, journal,
     gainSkill, wearTool, regardShift, regardOf, sawPrice, worthTo, dealKey, tradeOffer, doTrade,
     pathLen, adjacentFree, nearestTile, nearestScan, countTiles, household, findClaim,
+    hasLineOfSight, getKinshipRelation, checkAccessPermission, getHearth,
     plan, heuristic, goAct, ruleArrivals,
     ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
     dispatch, step, cancelAct, inject, read, hash,

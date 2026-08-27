@@ -1,0 +1,4 @@
+interface:
+  display_name: "Humanizer"
+  short_description: "Make prose feel human and alive"
+  default_prompt: "Use $humanizer to rewrite this text so it feels human, specific, and alive."

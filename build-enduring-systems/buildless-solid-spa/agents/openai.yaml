@@ -1,0 +1,4 @@
+interface:
+  display_name: "Buildless Solid SPA"
+  short_description: "Architect, build, and verify buildless Solid apps"
+  default_prompt: "Use $buildless-solid-spa to select a fitting architecture, build, and verify a maintainable browser-native Solid app without a bundler."
