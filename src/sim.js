@@ -1341,10 +1341,66 @@ function affordances(sim, personId, targetTile, onlySlot) {
   const ty = (targetTile / sim.W) | 0;
   let otherPerson = personAt(sim, tx, ty) - 1;
   if (otherPerson === personId) otherPerson = -1;
-  const selectedSlot = (onlySlot !== undefined && onlySlot >= 0) ? onlySlot : -1;
+
+  let selectedSlot = (onlySlot !== undefined && onlySlot >= 0) ? onlySlot : -1;
+  // Guard: If selectedSlot is not currently held in person's hands, treat as empty hands
+  if (selectedSlot >= 0 && (sim.tholderKind[selectedSlot] !== 1 || sim.tholder[selectedSlot] !== personId || sim.tqty[selectedSlot] <= 0)) {
+    selectedSlot = -1;
+  }
 
   const add = (act, label, slot) => affordanceList.push({ act, label, slot: slot === undefined ? -1 : slot, tile: targetTile });
 
+  // 1. Direct hand tool actions (eat, drink, fill, bandage)
+  if (selectedSlot >= 0) {
+    const stuffDef = DATA.STUFF[sim.tstuff[selectedSlot]];
+    const isBroken = stuffDef.tool && sim.twear[selectedSlot] >= 1.0;
+
+    if (!isBroken) {
+      if (stuffDef.kind === 'food') add('eat', 'Eat the ' + stuffDef.name, selectedSlot);
+      if (stuffDef.name === 'waterskin') {
+        if (tile === T.stream || tile === T.ford || tile === T.well || tile === T.bridge) add('fill', 'Fill waterskin with fresh water', selectedSlot);
+        add('drink', 'Drink fresh water', selectedSlot);
+      }
+      if (stuffDef.name === 'cloth') add('bandage', 'Bandage wounds', selectedSlot);
+    }
+  }
+
+  // 2. Physical ground item pickups (take) - check every distinct item on this tile
+  if (hands(sim, personId).length < 7) {
+    for (let t = 0; t < sim.tn; t++) {
+      if (sim.tholderKind[t] === 2 && sim.tholder[t] === targetTile && sim.tqty[t] > 0 && tile !== T.frame) {
+        add('take', 'Pick up ' + DATA.STUFF[sim.tstuff[t]].name + (sim.tqty[t] > 1 ? ' ×' + sim.tqty[t] : ''), t);
+      }
+    }
+  }
+
+  // 3. Water & Well direct drinking
+  if (tile === T.stream || tile === T.ford || tile === T.well) {
+    if (selectedSlot < 0) add('drink', 'Drink fresh water');
+  }
+
+  // 4. Person interactions (talk, attack, trade, gift)
+  if (otherPerson >= 0 && sim.palive[otherPerson]) {
+    if (selectedSlot >= 0) {
+      const stuffDef = DATA.STUFF[sim.tstuff[selectedSlot]];
+      const isBroken = stuffDef.tool && sim.twear[selectedSlot] >= 1.0;
+      if (!isBroken) {
+        if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0) add('attack', 'Attack ' + sim.pname[otherPerson], selectedSlot);
+        if (stuffDef.kind === 'coin') add('give', 'Give a penny to ' + sim.pname[otherPerson], selectedSlot);
+        if (stuffDef.kind !== 'coin') {
+          const offerQty = Math.min(20, sim.tqty[selectedSlot]);
+          const offer = tradeOffer(sim, personId, otherPerson, sim.tstuff[selectedSlot], offerQty);
+          if (offer.ok) add('sell', `Sell ${offerQty} ${sim.tstuff[selectedSlot]} for ${offer.ask}`, selectedSlot);
+          else add('offer', `Offer ${offerQty} ${sim.tstuff[selectedSlot]} — ${sim.pname[otherPerson]} won't pay`, selectedSlot);
+        }
+      }
+    } else {
+      if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0) add('attack', 'Attack ' + sim.pname[otherPerson]);
+      add('talk', 'Talk to ' + sim.pname[otherPerson]);
+    }
+  }
+
+  // 5. World, crafting & construction actions
   if (selectedSlot >= 0) {
     const stuffDef = DATA.STUFF[sim.tstuff[selectedSlot]];
     const isBroken = stuffDef.tool && sim.twear[selectedSlot] >= 1.0;
@@ -1352,13 +1408,8 @@ function affordances(sim, personId, targetTile, onlySlot) {
     if (isBroken) {
       add('inspect', 'Broken ' + stuffDef.name, selectedSlot);
     } else {
-      if (stuffDef.kind === 'food') add('eat', 'Eat the ' + stuffDef.name, selectedSlot);
-      if (stuffDef.name === 'waterskin') {
-        if (tile === T.stream || tile === T.ford) add('fill', 'Fill waterskin from stream', selectedSlot);
-        add('drink', 'Drink fresh water', selectedSlot);
-      }
       if (stuffDef.tool === 'axe' && tile === T.tree) add('chop', 'Fell the tree', selectedSlot);
-      if (stuffDef.tool === 'spade' && tile === T.grass) add('till', 'Break the ground', selectedSlot);
+      if (stuffDef.tool === 'spade' && (tile === T.grass || tile === T.tilled)) add('till', 'Break the ground', selectedSlot);
       if (stuffDef.tool === 'knife' && tile === T.grass) add('thatch', 'Cut thatch', selectedSlot);
       if (stuffDef.tool === 'knife' && tile === T.ripe) add('harvest', 'Reap the grain', selectedSlot);
       if (stuffDef.tool === 'knife' && sim.tstuff[selectedSlot] !== 'log') {
@@ -1369,42 +1420,22 @@ function affordances(sim, personId, targetTile, onlySlot) {
       if (stuffDef.name === 'grain') add('mill', 'Grind grain into flour', selectedSlot);
       if (stuffDef.name === 'flour') add('bake', 'Bake bread from flour', selectedSlot);
       if (stuffDef.name === 'log' && tile === T.grass) add('fence', 'Erect wooden fence', selectedSlot);
-      if (stuffDef.name === 'cloth') add('bandage', 'Bandage wounds', selectedSlot);
       if (stuffDef.tool === 'grimoire') add('cast', 'Cast ritual spell', selectedSlot);
-      if (otherPerson >= 0 && (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0)) add('attack', 'Attack ' + sim.pname[otherPerson], selectedSlot);
-      if (stuffDef.kind === 'coin' && otherPerson >= 0) add('give', 'Give a penny to ' + sim.pname[otherPerson], selectedSlot);
-      if (otherPerson >= 0 && stuffDef.kind !== 'coin') {
-        const offerQty = Math.min(20, sim.tqty[selectedSlot]);
-        const offer = tradeOffer(sim, personId, otherPerson, sim.tstuff[selectedSlot], offerQty);
-        if (offer.ok) add('sell', `Sell ${offerQty} ${sim.tstuff[selectedSlot]} for ${offer.ask}`, selectedSlot);
-        else add('offer', `Offer ${offerQty} ${sim.tstuff[selectedSlot]} — ${sim.pname[otherPerson]} won't pay`, selectedSlot);
-      }
     }
 
     if (stuffDef.kind === 'part' && (tile === T.grass || tile === T.frame)) add('store', 'Leave materials here', selectedSlot);
-    if (tile === T.hut) add('store', 'Put it in the store', selectedSlot);
+    if (tile === T.hut || tile === T.shed) add('store', 'Store ' + stuffDef.name + ' inside', selectedSlot);
     if (DATA.TILE_WALK[tile] === 1 && tile !== T.hut) add('drop', 'Drop ' + stuffDef.name + ' on the ground', selectedSlot);
   } else {
     // Empty hands affordances
-    if (otherPerson >= 0 && (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0)) add('attack', 'Attack ' + sim.pname[otherPerson]);
-    if (otherPerson >= 0 && sim.palive[otherPerson]) add('talk', 'Talk to ' + sim.pname[otherPerson]);
-    if (tile === T.hut) add('enter', 'Go inside');
+    if (tile === T.hut || tile === T.shed) add('enter', 'Go inside');
     if (tile === T.frame || sim.projects.has(targetTile)) add('build', 'Work on the building');
     if (tile === T.ripe) add('harvest', 'Reap the grain by hand');
     if (tile === T.tree && sim.season > 0.35 && sim.tstate[targetTile] > 0) add('forage', 'Pick berries');
     if (tile === T.grass && targetTile !== sim.phome[personId]) add('thatch', 'Gather thatch');
   }
 
-  // Always check for ground items if hands are not completely full
-  if (hands(sim, personId).length < 7) {
-    for (let t = 0; t < sim.tn; t++) {
-      if (sim.tholderKind[t] === 2 && sim.tholder[t] === targetTile && sim.tqty[t] > 0 && tile !== T.frame) {
-        add('take', 'Pick up ' + DATA.STUFF[sim.tstuff[t]].name, t);
-        break;
-      }
-    }
-  }
-
+  // 6. Inspect
   add('inspect', otherPerson >= 0 && sim.palive[otherPerson] ? 'Look at ' + sim.pname[otherPerson] : 'Look at the ' + tileName(sim, targetTile));
   return affordanceList;
 }
@@ -1459,6 +1490,7 @@ function describe(sim, personId, tileIndex) {
 function chooseAct(sim, personId, slot, target, actName) {
   const facingX = sim.px[personId] + DIRS[sim.pface[personId]][0];
   const facingY = sim.py[personId] + DIRS[sim.pface[personId]][1];
+  const hereTile = idx(sim, sim.px[personId], sim.py[personId]);
   const targetTile = target >= 0 ? target : idx(sim, facingX, facingY);
   const tx = targetTile % sim.W;
   const ty = (targetTile / sim.W) | 0;
@@ -1478,14 +1510,24 @@ function chooseAct(sim, personId, slot, target, actName) {
         const match = affordances(sim, personId, targetTile, -1).find(o => o.act === actName);
         if (match) resolvedSlot = match.slot;
       }
+      if (resolvedSlot < 0 && targetTile !== hereTile) {
+        const match = affordances(sim, personId, hereTile, -1).find(o => o.act === actName);
+        if (match) resolvedSlot = match.slot;
+      }
     }
     return { act: actName, slot: resolvedSlot, ti: targetTile };
   }
 
-  const hereTile = idx(sim, sim.px[personId], sim.py[personId]);
+  // Check underfoot ground items first if no explicit target
+  const underfootList = affordances(sim, personId, hereTile, slot);
+  const underfootTake = underfootList.find(a => a.act === 'take');
+  if (underfootTake && (target < 0 || target === hereTile)) {
+    return { ...underfootTake, ti: hereTile };
+  }
+
   let topAffordance = affordances(sim, personId, targetTile, slot)[0];
   if (!topAffordance || topAffordance.act === 'inspect') {
-    const underfootAffordance = affordances(sim, personId, hereTile, slot)[0];
+    const underfootAffordance = underfootList[0];
     if (underfootAffordance && underfootAffordance.act !== 'inspect') {
       return { ...underfootAffordance, ti: hereTile };
     }
@@ -2199,10 +2241,21 @@ function read(sim, query) {
     const facingList = affordances(sim, p, facingTile, query.slot);
     const underfootList = affordances(sim, p, hereTile, query.slot);
 
-    const merged = [...facingList];
-    for (const a of underfootList) {
-      if (!merged.some(m => m.act === a.act && m.tile === a.tile)) merged.push(a);
-    }
+    const underfootPriority = underfootList.filter(a => a.act === 'take' || a.act === 'enter' || a.act === 'eat' || a.act === 'drink');
+    const facingNonInspect = facingList.filter(a => a.act !== 'inspect');
+    const underfootRemaining = underfootList.filter(a => !underfootPriority.includes(a) && a.act !== 'inspect');
+    const inspects = [...facingList.filter(a => a.act === 'inspect'), ...underfootList.filter(a => a.act === 'inspect')];
+
+    const merged = [];
+    const pushUnique = (a) => {
+      if (!merged.some(m => m.act === a.act && m.tile === a.tile && m.slot === a.slot)) merged.push(a);
+    };
+
+    underfootPriority.forEach(pushUnique);
+    facingNonInspect.forEach(pushUnique);
+    underfootRemaining.forEach(pushUnique);
+    inspects.forEach(pushUnique);
+
     return merged;
   }
   if (query.site !== undefined) {

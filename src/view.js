@@ -333,8 +333,9 @@ function makeRenderer(canvas) {
         g.fillRect(badgeX - 1, badgeY - 1, 12, 12);
         drawActIcon(g, activeAct, badgeX, badgeY);
 
-        const duration = Math.max(1, simInstance.pbusyUntil[p] - simInstance.pactStart[p]);
-        const progress = Math.min(1, (simInstance.time - simInstance.pactStart[p]) / duration);
+        const duration = Math.max(0.01, simInstance.pbusyUntil[p] - simInstance.pactStart[p]);
+        const remaining = Math.max(0, simInstance.pbusyUntil[p] - simInstance.time);
+        const progress = Math.max(0, Math.min(1, 1 - (remaining / duration)));
         g.fillStyle = '#3a4150';
         g.fillRect(badgeX - 1, badgeY + 10, 12, 2);
         g.fillStyle = '#d9812b';
@@ -400,21 +401,43 @@ function play(root, seed) {
   function hold(d) { inject(S, focus, { k: 'hold', d }); }
   function release(d) { inject(S, focus, { k: 'release', d }); }
 
+  function syncSelSlot() {
+    const h = hands(S, focus);
+    if (selSlot >= 0 && !h.includes(selSlot)) {
+      selSlot = -1;
+    }
+  }
+
   function actA() {
     release();
     if (panelMode) return panelConfirm();
+    syncSelSlot();
     const list = read(S, { acts: focus, slot: selSlot });
     if (!list.length) return;
     const a = list[0];
     inject(S, focus, { k: 'act', slot: a.slot, target: a.tile, act: a.act });
+    if (a.act !== 'inspect' && a.act !== 'walk') {
+      work.style.display = 'block';
+      work.firstChild.style.width = '0%';
+      work.lastChild.textContent = DATA.ACTS[ACT[a.act]] || a.act;
+    }
   }
 
   function openActs() {
+    syncSelSlot();
     const list = read(S, { acts: focus, slot: selSlot });
     panelMode = 'acts';
     panelSel = 0;
     panelItems = list.length
-      ? list.map(a => ({ label: a.label, go: () => { inject(S, focus, { k: 'act', slot: a.slot, target: a.tile, act: a.act }); closePanel(); } }))
+      ? list.map(a => ({ label: a.label, go: () => {
+          inject(S, focus, { k: 'act', slot: a.slot, target: a.tile, act: a.act });
+          closePanel();
+          if (a.act !== 'inspect' && a.act !== 'walk') {
+            work.style.display = 'block';
+            work.firstChild.style.width = '0%';
+            work.lastChild.textContent = DATA.ACTS[ACT[a.act]] || a.act;
+          }
+        } }))
       : [{ label: 'Nothing to do here', go: closePanel }];
     renderPanel('Here', 'facing ' + dirName(S.pface[focus]));
   }
@@ -432,6 +455,7 @@ function play(root, seed) {
   function actB() {
     if (panelMode) return closePanel();
     cancelAct(S, focus);
+    work.style.display = 'none';
     if (selSlot >= 0) { selSlot = -1; renderHands(); }
   }
 
@@ -515,6 +539,7 @@ function play(root, seed) {
 
   let handsSig = '';
   function renderHands() {
+    syncSelSlot();
     const h = hands(S, focus);
     const sig = h.map(t => t + ':' + S.tqty[t]).join(',') + '|' + selSlot;
     if (sig === handsSig) return;
@@ -656,7 +681,7 @@ function play(root, seed) {
     draw(S, focus, real, rate);
     flushJournal();
     clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time);
-
+    syncSelSlot();
     if (!panelMode || panelMode === 'me') renderHands();
 
     {
@@ -668,10 +693,10 @@ function play(root, seed) {
     {
       const busy = S.pbusyUntil[focus] - S.time;
       const span = S.pbusyUntil[focus] - S.pactStart[focus];
-      if (busy > 0.2 && span > 0.5 && S.pact[focus] !== ACT.walk) {
-        const f = Math.min(1, (S.time - S.pactStart[focus]) / span);
+      if (busy > 0.01 && span > 0.05 && S.pact[focus] > ACT.walk) {
+        const progress = Math.max(0, Math.min(1, 1 - (busy / span)));
         work.style.display = 'block';
-        work.firstChild.style.width = (f * 100) + '%';
+        work.firstChild.style.width = (progress * 100) + '%';
         work.lastChild.textContent = DATA.ACTS[S.pact[focus]];
       } else {
         work.style.display = 'none';
