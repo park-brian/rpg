@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Ford</title>
+<style>
+/* ==== TOKENS ==== */
+:root{
+  --ink:#1a1d24; --ink2:#252a33; --parch:#e8dcc0; --parch2:#a89e88;
+  --grass:#6a9a4a; --stream:#4a7ab0; --path:#b8a070; --ember:#d9812b;
+  --mono:"Courier New",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{height:100%;width:100%;background:var(--ink);color:var(--parch);font:14px/1.35 var(--mono);overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%;width:100%;max-width:none;margin:0;overflow:hidden}
+#world{flex:1;position:relative;min-height:0;width:100%;background:#000;overflow:hidden}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges}
+#toast{position:absolute;left:12px;top:38px;max-width:440px;pointer-events:none;z-index:8}
+#toast div{background:rgba(26,29,36,.88);border-left:3px solid var(--ember);padding:5px 8px;margin-bottom:4px;opacity:0;transition:opacity .3s;border-radius:0 4px 4px 0}
+#toast div.on{opacity:1}
+#clock{position:absolute;right:10px;top:8px;font-size:12px;color:var(--parch2);pointer-events:none;background:rgba(26,29,36,.6);padding:2px 6px;border-radius:4px;z-index:8}
+#hands{display:flex;gap:6px;padding:6px 10px;background:var(--ink2);width:100%;overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#3a4150 var(--ink2)}
+#hands::-webkit-scrollbar{height:5px}
+#hands::-webkit-scrollbar-track{background:var(--ink2)}
+#hands::-webkit-scrollbar-thumb{background:#3a4150;border-radius:3px}
+#hands .slot{flex:0 0 auto;min-width:54px;height:54px;padding:4px;border:1px solid #3a4150;display:inline-flex;align-items:center;justify-content:center;font-size:11px;text-align:center;overflow:hidden;border-radius:4px;cursor:pointer;background:rgba(26,29,36,.5)}
+#hands .slot.sel{border-color:var(--ember);box-shadow:inset 0 0 0 1px var(--ember);background:rgba(217,129,43,.15)}
+#pad{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:flex-end;padding:0 14px 14px;pointer-events:none}
+#pad.hidden{display:none}
+#dpad{display:grid;grid-template:repeat(3,46px)/repeat(3,46px);gap:2px;pointer-events:auto}
+#dpad button{background:rgba(26,29,36,.35);border:1px solid rgba(232,220,192,.35);color:rgba(232,220,192,.8);font-size:18px;border-radius:6px}
+#dpad button:active{background:rgba(217,129,43,.6)}
+#dpad i{pointer-events:none}
+#ab{display:flex;gap:14px;align-items:center;pointer-events:auto}
+#ab button{width:60px;height:60px;border-radius:50%;border:1px solid rgba(232,220,192,.4);background:rgba(26,29,36,.35);color:rgba(232,220,192,.85);font:bold 20px var(--mono)}
+#ab button:active{background:rgba(217,129,43,.6)}
+#hint{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;text-align:center;font-size:12px;color:var(--parch);background:rgba(26,29,36,.88);border:1px solid #3a4150;border-radius:14px;padding:3px 12px;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;transition:opacity .15s;z-index:5}
+#world.touch #hint{bottom:96px}
+#work{position:absolute;left:50%;transform:translateX(-50%);bottom:38px;width:240px;max-width:80%;height:14px;background:rgba(26,29,36,.88);border:1px solid #3a4150;border-radius:3px;overflow:hidden;display:none;z-index:6}
+#world.touch #work{bottom:124px}
+#work i{display:block;height:100%;background:var(--ember);width:0}
+#work b{position:absolute;inset:0;font:11px var(--mono);font-weight:400;text-align:center;line-height:12px;color:var(--parch)}
+#menubtn{position:absolute;left:10px;top:8px;background:rgba(26,29,36,.6);border:1px solid #3a4150;color:var(--parch);font:13px var(--mono);padding:3px 8px;border-radius:4px;cursor:pointer;z-index:8}
+/* panels */
+#panel{position:absolute;inset:auto 0 0 0;max-height:70%;background:var(--ink);border-top:2px solid var(--ember);padding:10px;overflow:auto;display:none;z-index:10}
+#world.touch #panel{bottom:170px;max-height:calc(100% - 180px)}
+#panel.on{display:block}
+#panel h2{font-size:14px;color:var(--ember);margin-bottom:2px}
+#panel .sub{color:var(--parch2);margin-bottom:8px;font-style:italic}
+#panel .row{padding:5px 6px;border-left:3px solid transparent}
+#panel .row.sel{border-left-color:var(--ember);background:var(--ink2)}
+#panel .k{color:var(--parch2)}
+#panel .bar{display:inline-block;width:100px;height:8px;background:#3a4150;vertical-align:middle;margin-left:6px}
+#panel .bar i{display:block;height:100%;background:var(--grass)}
+/* test page */
+#test{padding:14px;overflow:auto;height:100%}
+#test h1{font-size:16px;color:var(--ember);margin-bottom:10px}
+#test .g{padding:4px 0;border-bottom:1px solid #2f3540}
+#test .pass::before{content:"PASS ";color:var(--grass)}
+#test .fail::before{content:"FAIL ";color:#d94b4b}
+#test .k{color:var(--parch2)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<!-- GAME_SCRIPT -->
+</body>
+</html>

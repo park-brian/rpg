@@ -1,0 +1,26 @@
+{
+  "name": "ford-game",
+  "version": "0.1.0",
+  "description": "Simulation and emergent life game engine",
+  "main": "src/game.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test tests/**/*.test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:e2e": "node --test tests/e2e/*.test.js",
+    "test:all": "node --test tests/**/*.test.js",
+    "test:playwright": "npx playwright test",
+    "test:playtest": "npx playwright test tests/e2e/playtest_bot.spec.js"
+  },
+  "keywords": [
+    "game",
+    "simulation",
+    "SoA",
+    "discrete-event"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
