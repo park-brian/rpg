@@ -57,7 +57,7 @@ npm install
 npm run build
 
 # Start local development server
-npx http-server . -p 8080 -c-1
+npm start
 ```
 
 Open `http://127.0.0.1:8080` in your web browser.

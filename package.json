@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/sim.js",
   "scripts": {
+    "start": "npx http-server . -p 8080 -c-1",
     "build": "node build.js",
     "test": "node --test tests/**/*.test.js",
     "test:unit": "node --test tests/unit/*.test.js",
