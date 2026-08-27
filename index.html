@@ -410,6 +410,7 @@ function createSim(seed, opts = {}) {
     hoursByAct: new Float32Array(16),
     deaths: { starved: 0, exposure: 0, age: 0, combat: 0 },
     hearths: new Map(), // homeTile -> { litUntil, firewood }
+    penemy: new Int16Array(MAX_PERSONS).fill(-1),
     heap: new Heap(),
     rng
   };
@@ -984,10 +985,123 @@ function findClaim(sim, nearX, nearY) {
   return bestTile;
 }
 
+function hasLineOfSight(sim, x0, y0, x1, y1, maxRadius = 12) {
+  if (x0 === x1 && y0 === y1) return true;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const distSq = dx * dx + dy * dy;
+  if (distSq > maxRadius * maxRadius) return false;
+
+  const steps = Math.max(Math.abs(dx), Math.abs(dy));
+  for (let s = 1; s < steps; s++) {
+    const cx = Math.round(x0 + (dx * s) / steps);
+    const cy = Math.round(y0 + (dy * s) / steps);
+    if (cx < 0 || cy < 0 || cx >= sim.W || cy >= sim.H) return false;
+    const tile = sim.tiles[cy * sim.W + cx];
+    if (tile === T.hut || tile === T.shed || tile === T.tree) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getKinshipRelation(sim, personA, personB) {
+  if (personA < 0 || personB < 0 || personA === personB) return 'Self';
+  if (sim.ppartner[personA] === personB || sim.ppartner[personB] === personA) return 'Spouse';
+  if (sim.pmother[personA] === personB) return 'Mother';
+  if (sim.pmother[personB] === personA) return 'Child';
+  if (sim.pmother[personA] >= 0 && sim.pmother[personA] === sim.pmother[personB]) return 'Sibling';
+  if (sim.phome[personA] >= 0 && sim.phome[personA] === sim.phome[personB]) return 'Kin';
+  return null;
+}
+
+function checkAccessPermission(sim, personId, targetTile, stuffName) {
+  let ownerHome = -1;
+  const tileType = sim.tiles[targetTile];
+  if (tileType === T.hut || tileType === T.shed) {
+    ownerHome = targetTile;
+  } else {
+    for (let h = 0; h < sim.households.length; h++) {
+      const hh = sim.households[h];
+      const hx = hh.home % sim.W;
+      const hy = (hh.home / sim.W) | 0;
+      const tx = targetTile % sim.W;
+      const ty = (targetTile / sim.W) | 0;
+      if (Math.abs(hx - tx) <= 3 && Math.abs(hy - ty) <= 3) {
+        ownerHome = hh.home;
+        break;
+      }
+    }
+  }
+
+  if (ownerHome < 0) return { isTheft: false, isAllowed: true };
+
+  const owners = household(sim, ownerHome);
+  if (owners.length === 0) return { isTheft: false, isAllowed: true };
+
+  // 1. Domestic household member
+  if (sim.phome[personId] === ownerHome) {
+    return { isTheft: false, isAllowed: true, reason: 'family', owners };
+  }
+
+  // 2. Trusted friend / allied guest (regard >= 30)
+  let maxFriendRegard = -100;
+  for (const o of owners) {
+    const r = regardOf(sim, o, personId);
+    if (r > maxFriendRegard) maxFriendRegard = r;
+  }
+
+  if (maxFriendRegard >= 30) {
+    return { isTheft: false, isAllowed: true, isFriend: true, friendRegard: maxFriendRegard, owners };
+  }
+
+  // 3. Unauthorized taking (Theft) -> Sensory Perception Check
+  const tx = targetTile % sim.W;
+  const ty = (targetTile / sim.W) | 0;
+  const hour = (sim.time % 1440) / 60;
+  const isNight = hour < 5.5 || hour > 20.5;
+  const maxVisionRadius = isNight ? 5 : 12;
+
+  const witnesses = [];
+  for (let p = 0; p < sim.pn; p++) {
+    if (!sim.palive[p] || p === personId || sim.pkind[p] > 0) continue;
+    const px = sim.px[p];
+    const py = sim.py[p];
+    const isSameTile = px === tx && py === ty;
+    const isOwner = owners.includes(p);
+
+    const isSleeping = sim.pneeds[p * 5 + 1] < 20 || (isSameTile && (hour >= 21 || hour < 5));
+    if (isSleeping) {
+      if (isSameTile) {
+        const wakeChance = isOwner ? 0.4 : 0.2;
+        if (sim.rng && sim.rng() < wakeChance) {
+          witnesses.push(p);
+        }
+      }
+      continue;
+    }
+
+    if (isSameTile) {
+      witnesses.push(p);
+    } else if (hasLineOfSight(sim, px, py, tx, ty, maxVisionRadius)) {
+      witnesses.push(p);
+    }
+  }
+
+  return {
+    isTheft: true,
+    isAllowed: false,
+    witnessed: witnesses.length > 0,
+    witnesses,
+    owners
+  };
+}
+
 
 // ============================================================================
 // ==== 5. MODULAR UTILITY AI DECISION PLANNER ====
 // ============================================================================
+
 
 function plan(sim, personId) {
   if (sim.pplanner[personId] === 1) {
@@ -1003,6 +1117,64 @@ function goAct(sim, personId, tileIndex, actName, slot) {
     return { k: 'act', slot, target: tileIndex, act: actName };
   }
   return { k: 'go', to: adjacentFree(sim, tx, ty, sim.px[personId], sim.py[personId]), for: tileIndex };
+}
+
+function evalCombatResponse(sim, personId) {
+  let enemy = sim.penemy ? sim.penemy[personId] : -1;
+  if (enemy >= 0 && (!sim.palive[enemy] || enemy === personId)) {
+    if (sim.penemy) sim.penemy[personId] = -1;
+    enemy = -1;
+  }
+
+  if (enemy < 0) {
+    for (let p = 0; p < sim.pn; p++) {
+      if (!sim.palive[p] || p === personId) continue;
+      if (regardOf(sim, personId, p) <= -30) {
+        const d = Math.abs(sim.px[personId] - sim.px[p]) + Math.abs(sim.py[personId] - sim.py[p]);
+        if (d <= 8 && hasLineOfSight(sim, sim.px[personId], sim.py[personId], sim.px[p], sim.py[p], 8)) {
+          enemy = p;
+          if (sim.penemy) sim.penemy[personId] = p;
+          break;
+        }
+      }
+    }
+  }
+
+  if (enemy >= 0) {
+    const ex = sim.px[enemy];
+    const ey = sim.py[enemy];
+    const dist = Math.abs(sim.px[personId] - ex) + Math.abs(sim.py[personId] - ey);
+
+    if (dist > 15) {
+      if (sim.penemy) sim.penemy[personId] = -1;
+      return null;
+    }
+
+    const isChild = ageYears(sim, personId) < DATA.ADULT_YEARS;
+    let totalWounds = 0;
+    for (let r = 0; r < 6; r++) totalWounds += sim.pwounds[personId * 6 + r];
+    if (isChild || totalWounds > 0.6) {
+      const ddx = sim.px[personId] - ex;
+      const ddy = sim.py[personId] - ey;
+      let fleeDir = 0;
+      if (Math.abs(ddx) > Math.abs(ddy)) fleeDir = ddx > 0 ? 1 : 3;
+      else fleeDir = ddy > 0 ? 2 : 0;
+      return { k: 'move', d: fleeDir };
+    }
+
+    const axe = held(sim, 1, personId, 'axe');
+    const knife = held(sim, 1, personId, 'knife');
+    const bow = held(sim, 1, personId, 'bow');
+    const spade = held(sim, 1, personId, 'spade');
+    const weaponSlot = axe >= 0 ? axe : knife >= 0 ? knife : bow >= 0 ? bow : spade >= 0 ? spade : -1;
+
+    if (dist <= 1) {
+      return { k: 'act', slot: weaponSlot, target: idx(sim, ex, ey), act: 'attack' };
+    } else {
+      return { k: 'go', to: adjacentFree(sim, ex, ey, sim.px[personId], sim.py[personId]), for: idx(sim, ex, ey) };
+    }
+  }
+  return null;
 }
 
 function evalNutrition(sim, personId) {
@@ -1038,6 +1210,32 @@ function evalNutrition(sim, personId) {
       return isAtHome
         ? { k: 'take', t: foodInStore, qty: 1 }
         : { k: 'go', to: adjacentFree(sim, home % sim.W, (home / sim.W) | 0, sim.px[personId], sim.py[personId]) };
+    }
+  }
+
+  // 3. Friend Cabin Hospitality Sharing
+  if (food < 45) {
+    for (let h = 0; h < sim.households.length; h++) {
+      const hh = sim.households[h];
+      if (hh.home === home || sim.tiles[hh.home] !== T.hut) continue;
+      const hx = hh.home % sim.W;
+      const hy = (hh.home / sim.W) | 0;
+      const dist = Math.abs(sim.px[personId] - hx) + Math.abs(sim.py[personId] - hy);
+      if (dist <= 18) {
+        const owners = household(sim, hh.home);
+        const isFriendly = owners.some(o => regardOf(sim, o, personId) >= 30);
+        if (isFriendly) {
+          const friendFood = held(sim, 2, hh.home, 'bread') >= 0 ? held(sim, 2, hh.home, 'bread') :
+                            held(sim, 2, hh.home, 'roast_meat') >= 0 ? held(sim, 2, hh.home, 'roast_meat') :
+                            held(sim, 2, hh.home, 'berries') >= 0 ? held(sim, 2, hh.home, 'berries') : -1;
+          if (friendFood >= 0) {
+            const isAtFriendHome = dist <= 1;
+            return isAtFriendHome
+              ? { k: 'take', t: friendFood, qty: 1 }
+              : { k: 'go', to: adjacentFree(sim, hx, hy, sim.px[personId], sim.py[personId]) };
+          }
+        }
+      }
     }
   }
   return null;
@@ -1387,7 +1585,11 @@ function evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHo
 }
 
 function heuristic(sim, personId) {
-  // 1. Critical Survival Evaluators
+  // 1. Tactical Combat Defense & Hostile Response
+  const combatIntent = evalCombatResponse(sim, personId);
+  if (combatIntent) return combatIntent;
+
+  // 2. Critical Survival Evaluators
   const survivalIntent = evalNutrition(sim, personId) || evalSleepAndWarmth(sim, personId);
   if (survivalIntent) return survivalIntent;
 
@@ -1565,11 +1767,15 @@ function affordances(sim, personId, targetTile, onlySlot) {
 
   // 4. Person interactions (talk, attack, trade, gift)
   if (otherPerson >= 0 && sim.palive[otherPerson]) {
+    const isHostile = (sim.penemy && sim.penemy[personId] === otherPerson) ||
+                      (sim.penemy && sim.penemy[otherPerson] === personId) ||
+                      regardOf(sim, personId, otherPerson) <= -30 ||
+                      regardOf(sim, otherPerson, personId) <= -30;
     if (selectedSlot >= 0) {
       const stuffDef = DATA.STUFF[sim.tstuff[selectedSlot]];
       const isBroken = stuffDef.tool && sim.twear[selectedSlot] >= 1.0;
       if (!isBroken) {
-        if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0) add('attack', 'Attack ' + sim.pname[otherPerson], selectedSlot);
+        if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0 || isHostile) add('attack', 'Attack ' + sim.pname[otherPerson], selectedSlot);
         if (stuffDef.kind === 'coin') add('give', 'Give a penny to ' + sim.pname[otherPerson], selectedSlot);
         if (stuffDef.kind !== 'coin') {
           const offerQty = Math.min(20, sim.tqty[selectedSlot]);
@@ -1579,7 +1785,7 @@ function affordances(sim, personId, targetTile, onlySlot) {
         }
       }
     } else {
-      if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0) add('attack', 'Attack ' + sim.pname[otherPerson]);
+      if (sim.pkind[otherPerson] > 0 || sim.pkind[personId] > 0 || isHostile) add('attack', 'Attack ' + sim.pname[otherPerson]);
       add('talk', 'Talk to ' + sim.pname[otherPerson]);
     }
   }
@@ -1662,6 +1868,40 @@ function describe(sim, personId, tileIndex) {
     lines.push(['carrying', o.hands.map(h => h.name + (h.qty > 1 ? ' ×' + h.qty : '')).join(', ') || 'nothing']);
     const home = sim.phome[otherPerson];
     lines.push(['home', home >= 0 ? (sim.tiles[home] === T.hut ? 'a hut nearby' : 'a claim nearby') : 'none']);
+
+    if (personId >= 0) {
+      const r = regardOf(sim, otherPerson, personId);
+      const kinship = getKinshipRelation(sim, personId, otherPerson);
+      let relationStr = '';
+      if (kinship) relationStr += `${kinship} • `;
+      if (r >= 50) relationStr += `Devoted Kin (+${r})`;
+      else if (r >= 30) relationStr += `Trusted Friend (+${r})`;
+      else if (r >= 10) relationStr += `Friendly (+${r})`;
+      else if (r >= -10) relationStr += `Stranger (${r})`;
+      else if (r >= -30) relationStr += `Suspicious (${r})`;
+      else relationStr += `Hostile Enemy (${r})`;
+
+      lines.push(['relation', relationStr]);
+      const hospitality = (r >= 30 || (sim.phome[personId] === home && home >= 0))
+        ? 'welcome guest (shares food)'
+        : 'stranger (taking food is theft)';
+      lines.push(['sharing', hospitality]);
+    } else {
+      let totalRegard = 0, countRegard = 0;
+      for (let p = 0; p < sim.pn; p++) {
+        if (p !== otherPerson && sim.palive[p]) {
+          totalRegard += regardOf(sim, p, otherPerson);
+          countRegard++;
+        }
+      }
+      const avg = countRegard > 0 ? Math.round(totalRegard / countRegard) : 0;
+      const standing = avg >= 30 ? `Respected Leader (+${avg})` :
+                       avg >= 10 ? `Well-Liked (+${avg})` :
+                       avg >= -10 ? `Ordinary Citizen (${avg})` :
+                       avg >= -30 ? `Distrusted (${avg})` : `Outlaw / Shunned (${avg})`;
+      lines.push(['standing', standing]);
+    }
+
     return { title: o.name, lines };
   }
 
@@ -1827,8 +2067,33 @@ function applyAct(sim, personId, targetTile, action) {
       if (slot < 0 || sim.tholderKind[slot] !== 2 || sim.tqty[slot] <= 0 || hands(sim, personId).length >= 7) {
         return { min: 0, act: ACT.idle };
       }
+      const stuffName = DATA.STUFF[sim.tstuff[slot]].name;
+      const perm = checkAccessPermission(sim, personId, targetTile, stuffName);
+
       moveThing(sim, slot, personId, 1);
-      journal(sim, `${sim.pname[personId]} picked up ${DATA.STUFF[sim.tstuff[slot]].name}.`);
+
+      if (perm.isTheft) {
+        if (perm.witnessed) {
+          const witness = perm.witnesses[0];
+          journal(sim, `${sim.pname[witness]} caught ${sim.pname[personId]} stealing ${stuffName}! "Thief!"`);
+          for (const w of perm.witnesses) {
+            regardShift(sim, w, personId, -60);
+            if (sim.penemy) sim.penemy[w] = personId;
+          }
+          for (const o of perm.owners) {
+            regardShift(sim, o, personId, -80);
+            if (sim.penemy) sim.penemy[o] = personId;
+          }
+        } else {
+          journal(sim, `${sim.pname[personId]} stealthily took ${stuffName} from the store.`);
+        }
+      } else if (perm.isFriend) {
+        regardShift(sim, perm.owners[0], personId, 1);
+        sim.pneeds[personId * 5 + 4] = Math.min(100, sim.pneeds[personId * 5 + 4] + 5);
+        journal(sim, `${sim.pname[personId]} shared ${stuffName} from ${sim.pname[perm.owners[0]]}'s hearth as a welcome friend.`);
+      } else {
+        journal(sim, `${sim.pname[personId]} picked up ${stuffName}.`);
+      }
       return actRes('take');
     }
     case 'mill': {
@@ -1931,6 +2196,20 @@ function applyAct(sim, personId, targetTile, action) {
       sim.pwounds[other * 6 + hitRegion] = Math.min(1.0, sim.pwounds[other * 6 + hitRegion] + power);
       gainSkill(sim, personId, 9, 0.1);
       journal(sim, `${sim.pname[personId]} struck ${sim.pname[other]}.`);
+
+      regardShift(sim, other, personId, -70);
+      regardShift(sim, personId, other, -30);
+      if (sim.penemy) {
+        sim.penemy[other] = personId;
+        sim.penemy[personId] = other;
+      }
+      for (let p = 0; p < sim.pn; p++) {
+        if (!sim.palive[p] || p === personId || p === other || sim.pkind[p] > 0) continue;
+        if (regardOf(sim, p, other) >= 30 && hasLineOfSight(sim, sim.px[p], sim.py[p], tx, ty, 10)) {
+          regardShift(sim, p, personId, -50);
+          if (sim.penemy) sim.penemy[p] = personId;
+        }
+      }
 
       let totalWounds = 0;
       for (let r = 0; r < 6; r++) totalWounds += sim.pwounds[other * 6 + r];
@@ -2389,6 +2668,24 @@ function dispatch(sim, event) {
       regardShift(sim, personId, event.b, 2);
       regardShift(sim, event.b, personId, 2);
 
+      // Social Gossip: propagate reputation of criminals / hostiles
+      if (sim.regard[personId] && sim.regard[event.b]) {
+        for (const targetIdStr in sim.regard[personId]) {
+          const targetId = Number(targetIdStr);
+          const opinion = sim.regard[personId][targetId];
+          if (opinion <= -30 && regardOf(sim, event.b, personId) > 15) {
+            regardShift(sim, event.b, targetId, -15);
+          }
+        }
+        for (const targetIdStr in sim.regard[event.b]) {
+          const targetId = Number(targetIdStr);
+          const opinion = sim.regard[event.b][targetId];
+          if (opinion <= -30 && regardOf(sim, personId, event.b) > 15) {
+            regardShift(sim, personId, targetId, -15);
+          }
+        }
+      }
+
       // Social Gossip: propagate price beliefs on meeting
       if (sim.belief[personId] && sim.belief[event.b]) {
         for (const stuff of Object.keys(sim.belief[personId])) {
@@ -2498,10 +2795,23 @@ function read(sim, query) {
   }
   if (query === 'directory' || query.directory) {
     const list = [];
+    const focusPerson = query.focus !== undefined ? query.focus : (query.person !== undefined ? query.person : -1);
     for (let p = 0; p < sim.pn; p++) {
       if (!sim.palive[p]) continue;
       const b = p * 5;
       const inventory = hands(sim, p).map(t => ({ id: t, name: DATA.STUFF[sim.tstuff[t]].name, qty: sim.tqty[t], kind: DATA.STUFF[sim.tstuff[t]].kind }));
+      let relationBadge = '';
+      if (focusPerson >= 0 && focusPerson !== p) {
+        const r = regardOf(sim, p, focusPerson);
+        const k = getKinshipRelation(sim, focusPerson, p);
+        if (k) relationBadge = `[${k} +${r}]`;
+        else if (r >= 50) relationBadge = `[Kin +${r}]`;
+        else if (r >= 30) relationBadge = `[Friend +${r}]`;
+        else if (r >= 10) relationBadge = `[Acquaintance +${r}]`;
+        else if (r <= -30) relationBadge = `[Enemy ${r}]`;
+        else if (r < 0) relationBadge = `[Distrusted ${r}]`;
+        else relationBadge = `[Stranger 0]`;
+      }
       list.push({
         id: p,
         name: sim.pname[p],
@@ -2514,7 +2824,8 @@ function read(sim, query) {
         needs: Array.from(sim.pneeds.slice(b, b + 5)),
         hands: inventory,
         home: sim.phome[p],
-        planner: sim.pplanner[p]
+        planner: sim.pplanner[p],
+        relationBadge
       });
     }
     return list;
@@ -2716,6 +3027,7 @@ function saveState(sim) {
     ppartner: Array.from(sim.ppartner.subarray(0, sim.pn)),
     pmother: Array.from(sim.pmother.subarray(0, sim.pn)),
     phome: Array.from(sim.phome.subarray(0, sim.pn)),
+    penemy: sim.penemy ? Array.from(sim.penemy.subarray(0, sim.pn)) : [],
     pname: sim.pname.slice(0, sim.pn),
     regard: sim.regard.slice(0, sim.pn),
     belief: sim.belief.slice(0, sim.pn),
@@ -2759,6 +3071,7 @@ function loadState(simOrJson, maybeJson) {
   if (data.ppartner) sim.ppartner.set(data.ppartner);
   if (data.pmother) sim.pmother.set(data.pmother);
   if (data.phome) sim.phome.set(data.phome);
+  if (data.penemy && sim.penemy) sim.penemy.set(data.penemy);
   if (data.pname) sim.pname = data.pname;
   if (data.regard) sim.regard = data.regard;
   if (data.belief) sim.belief = data.belief;
@@ -3524,10 +3837,10 @@ function play(root, seed) {
   function openInhabitants() {
     panelMode = 'inhabitants';
     panelSel = 0;
-    const dir = read(S, 'directory') || [];
+    const dir = read(S, { directory: true, focus }) || [];
     panelItems = [
       ...dir.map(p => ({
-        label: `${p.kind > 0 ? '🐾' : '👤'} ${p.name} (${p.age}y) — ${p.act} @ (${p.x},${p.y})${p.id === focus ? ' [YOU]' : ''}`,
+        label: `${p.kind > 0 ? '🐾' : '👤'} ${p.name} (${p.age}y)${p.relationBadge ? ' ' + p.relationBadge : ''} — ${p.act} @ (${p.x},${p.y})${p.id === focus ? ' [YOU]' : ''}`,
         go: () => {
           if (p.id === focus) {
             closePanel();

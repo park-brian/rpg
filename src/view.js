@@ -715,10 +715,10 @@ function play(root, seed) {
   function openInhabitants() {
     panelMode = 'inhabitants';
     panelSel = 0;
-    const dir = read(S, 'directory') || [];
+    const dir = read(S, { directory: true, focus }) || [];
     panelItems = [
       ...dir.map(p => ({
-        label: `${p.kind > 0 ? '🐾' : '👤'} ${p.name} (${p.age}y) — ${p.act} @ (${p.x},${p.y})${p.id === focus ? ' [YOU]' : ''}`,
+        label: `${p.kind > 0 ? '🐾' : '👤'} ${p.name} (${p.age}y)${p.relationBadge ? ' ' + p.relationBadge : ''} — ${p.act} @ (${p.x},${p.y})${p.id === focus ? ' [YOU]' : ''}`,
         go: () => {
           if (p.id === focus) {
             closePanel();
