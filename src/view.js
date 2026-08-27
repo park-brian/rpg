@@ -396,8 +396,7 @@ function makeRenderer(canvas) {
 // ==== 3. INTERACTIVE GAMEPLAY, UI CONTROLLER & INSPECT HOOKS ====
 // ============================================================================
 
-function play(root, seed) {
-  const { S, player } = makeWorld(seed);
+function initGame(root, S, player) {
   let focus = player;
   let selIdx = -1;
   let speed = 1;
@@ -1076,6 +1075,67 @@ function play(root, seed) {
       }
     });
   }
+}
+
+function play(root, seed, opts = {}) {
+  const q = new URLSearchParams(typeof location !== 'undefined' ? (location.search || '').replace(/^\?/, '') : '');
+  const preroll = opts.preroll !== undefined ? opts.preroll : (q.has('preroll') ? +q.get('preroll') : (q.has('years') ? +q.get('years') : 40));
+
+  if (preroll <= 0) {
+    const { S, player } = makeWorld(seed);
+    return initGame(root, S, player);
+  }
+
+  // Render Genesis Chronicle Screen
+  root.innerHTML = `
+    <div id="genesis" style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;background:var(--ink);color:var(--parch);padding:24px;text-align:center;">
+      <h1 style="font-size:26px;color:var(--ember);margin-bottom:6px;letter-spacing:3px;">FORD</h1>
+      <p style="font-style:italic;color:var(--parch2);margin-bottom:28px;">Forty years have passed in the valley...</p>
+      
+      <div style="width:340px;max-width:90%;background:var(--ink2);border:1px solid #3a4150;border-radius:6px;padding:14px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px;">
+          <span id="gen-year-label" style="font-weight:bold;color:var(--parch)">Year 1 of ${preroll}</span>
+          <span id="gen-pct-label" style="color:var(--ember)">0%</span>
+        </div>
+        <div style="width:100%;height:8px;background:#3a4150;border-radius:4px;overflow:hidden;">
+          <div id="gen-bar" style="width:0%;height:100%;background:var(--ember);transition:width .1s ease-out;"></div>
+        </div>
+      </div>
+
+      <div id="gen-stats" style="font-size:12px;color:var(--parch2);margin-bottom:20px;display:flex;gap:18px;">
+        <span>👤 <b id="gen-pop" style="color:var(--parch)">2</b> villagers</span>
+        <span>🛖 <b id="gen-huts" style="color:var(--parch)">1</b> cabins</span>
+        <span>🌾 <b id="gen-grain" style="color:var(--parch)">1,000</b> grain</span>
+      </div>
+
+      <div id="gen-chronicle" style="width:440px;max-width:90%;height:80px;font-size:12px;color:#c0b49c;line-height:1.45;overflow:hidden;border-left:2px solid var(--ember);padding-left:12px;text-align:left;display:flex;flex-direction:column;justify-content:flex-end;">
+        <div><em>Hal and Edda came up the road with a cart...</em></div>
+      </div>
+    </div>
+  `;
+
+  const yearLabel = root.querySelector('#gen-year-label');
+  const pctLabel = root.querySelector('#gen-pct-label');
+  const bar = root.querySelector('#gen-bar');
+  const popEl = root.querySelector('#gen-pop');
+  const hutsEl = root.querySelector('#gen-huts');
+  const grainEl = root.querySelector('#gen-grain');
+  const chronicleEl = root.querySelector('#gen-chronicle');
+
+  makeWorldWandererAsync(seed, preroll, (progress) => {
+    const pct = Math.round((progress.year / progress.totalYears) * 100);
+    if (yearLabel) yearLabel.textContent = `Year ${progress.year} of ${progress.totalYears}`;
+    if (pctLabel) pctLabel.textContent = `${pct}%`;
+    if (bar) bar.style.width = `${pct}%`;
+    if (popEl) popEl.textContent = progress.metrics.pop;
+    if (hutsEl) hutsEl.textContent = progress.metrics.huts;
+    if (grainEl) grainEl.textContent = progress.metrics.grain.toLocaleString();
+    if (chronicleEl && progress.journals && progress.journals.length) {
+      chronicleEl.innerHTML = progress.journals.map(j => `<div>${j}</div>`).join('');
+    }
+  }).then(({ S, player }) => {
+    initGame(root, S, player);
+  });
 }
 
 

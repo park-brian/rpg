@@ -21,9 +21,9 @@ test.describe('Autonomous E2E Playtesting Bot Scenario', () => {
   test('Single-Player Autonomous Playtest: Perception, Survival, Affordances & Invariants', async ({ page }) => {
     test.setTimeout(60000);
 
-    // 1. Launch into live interactive game
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('canvas#c');
+    // 1. Launch into live interactive game with fast 2-year preroll for test bot
+    await page.goto('/?preroll=2', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('canvas#c', { timeout: 30000 });
     await page.waitForFunction(() => window.sim && typeof window.sim.inspect === 'function');
 
     // 2. Observe initial state via window.sim.inspect()

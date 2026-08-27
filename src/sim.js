@@ -759,39 +759,45 @@ function pathLen(sim, startX, startY, targetX, targetY) {
   const H = sim.H;
 
   if (!sim.seenBuffer) sim.seenBuffer = new Int32Array(W * H);
+  if (!sim.distBuffer) sim.distBuffer = new Int16Array(W * H);
+  if (!sim.queueBuffer) sim.queueBuffer = new Int32Array(W * H);
+
   const seen = sim.seenBuffer;
+  const dist = sim.distBuffer;
+  const queue = sim.queueBuffer;
   sim.seenStamp = (sim.seenStamp || 0) + 1;
   const stamp = sim.seenStamp;
 
-  let queue = [startX + startY * W];
-  seen[startX + startY * W] = stamp;
-  let distance = 0;
-  let visitedCount = 0;
+  const startIdx = startX + startY * W;
+  seen[startIdx] = stamp;
+  dist[startIdx] = 0;
+  queue[0] = startIdx;
+  let head = 0;
+  let tail = 1;
 
-  while (queue.length && distance < 600 && visitedCount < 40000) {
-    distance++;
-    const nextQueue = [];
-    for (const tileIdx of queue) {
-      visitedCount++;
-      const cx = tileIdx % W;
-      const cy = (tileIdx / W) | 0;
+  while (head < tail) {
+    const tileIdx = queue[head++];
+    const d = dist[tileIdx];
+    if (d >= 600) break;
 
-      for (const [dx, dy] of DIRS) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+    const cx = tileIdx % W;
+    const cy = (tileIdx / W) | 0;
 
-        const neighborIdx = nx + ny * W;
-        if (seen[neighborIdx] === stamp) continue;
-        seen[neighborIdx] = stamp;
+    for (const [dx, dy] of DIRS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
 
-        if (nx === targetX && ny === targetY) return distance;
-        if (DATA.TILE_WALK[sim.tiles[neighborIdx]] !== 1) continue;
+      const neighborIdx = nx + ny * W;
+      if (seen[neighborIdx] === stamp) continue;
+      seen[neighborIdx] = stamp;
 
-        nextQueue.push(neighborIdx);
-      }
+      if (nx === targetX && ny === targetY) return d + 1;
+      if (DATA.TILE_WALK[sim.tiles[neighborIdx]] !== 1) continue;
+
+      dist[neighborIdx] = d + 1;
+      queue[tail++] = neighborIdx;
     }
-    queue = nextQueue;
   }
   return -1;
 }
@@ -2465,6 +2471,9 @@ function ruleDay(sim) {
 
 function die(sim, personId, cause, text) {
   sim.palive[personId] = 0;
+  sim.pact[personId] = ACT.idle;
+  sim.pbusyUntil[personId] = sim.time;
+  sim.pplanSeq[personId]++;
   clearSpatialOccupant(sim, personId, sim.px[personId], sim.py[personId]);
   sim.deaths[cause]++;
   journal(sim, text);
@@ -2579,6 +2588,8 @@ function dispatch(sim, event) {
         }
       } else if (sim.pplanner[personId] === 1) {
         dt = 0.05;
+      } else {
+        dt = 15; // Autonomous AI idle pacing: rest 15 minutes when no immediate work
       }
 
       sim.pact[personId] = actType;
@@ -2924,9 +2935,11 @@ function generateWorldChunk(seed, cx, cy) {
 }
 
 function makeWorldWanderer(seed, prerollYears = 40) {
-  const { S } = makeWorld(seed, false);
+  const { S, home } = makeWorld(seed, false);
   const YEAR = DATA.DAYS_PER_YEAR * 1440;
-  step(S, S.time + prerollYears * YEAR);
+  if (prerollYears > 0) {
+    step(S, S.time + prerollYears * YEAR);
+  }
 
   const roadY = S.H >> 1;
   const player = addPerson(S, { name: 'You', x: 2, y: roadY, planner: 1, age: 24 });
@@ -2936,8 +2949,34 @@ function makeWorldWanderer(seed, prerollYears = 40) {
   addThing(S, { stuff: 'bread', qty: 2, holder: player, holderKind: 1 });
   addThing(S, { stuff: 'penny', qty: 10, holder: player, holderKind: 1 });
 
-  journal(S, `After 40 years, a wanderer arrives on the road from the west.`);
-  return { S, player };
+  journal(S, `After ${prerollYears} years, a wanderer arrives on the road from the west.`);
+  return { S, player, home };
+}
+
+async function makeWorldWandererAsync(seed, prerollYears = 40, onProgress = null) {
+  const { S, home } = makeWorld(seed, false);
+  const YEAR = DATA.DAYS_PER_YEAR * 1440;
+
+  for (let y = 1; y <= prerollYears; y++) {
+    step(S, S.time + YEAR);
+    if (onProgress) {
+      const m = read(S, 'metrics');
+      const recentJournals = S.journal.slice(-4);
+      onProgress({ year: y, totalYears: prerollYears, metrics: m, journals: recentJournals, sim: S });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  const roadY = S.H >> 1;
+  const player = addPerson(S, { name: 'You', x: 2, y: roadY, planner: 1, age: 24 });
+  addThing(S, { stuff: 'axe', holder: player, holderKind: 1 });
+  addThing(S, { stuff: 'knife', holder: player, holderKind: 1 });
+  addThing(S, { stuff: 'waterskin', holder: player, holderKind: 1 });
+  addThing(S, { stuff: 'bread', qty: 2, holder: player, holderKind: 1 });
+  addThing(S, { stuff: 'penny', qty: 10, holder: player, holderKind: 1 });
+
+  journal(S, `After ${prerollYears} years of history, a wanderer arrives on the road from the west.`);
+  return { S, player, home };
 }
 
 function saveState(sim) {
@@ -3054,7 +3093,7 @@ export {
   plan, heuristic, goAct, ruleArrivals,
   ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
   dispatch, step, cancelAct, inject, read, hash,
-  makeWorld, makeWorldWanderer, getBiome, generateWorldChunk, saveState, loadState
+  makeWorld, makeWorldWanderer, makeWorldWandererAsync, getBiome, generateWorldChunk, saveState, loadState
 };
 
 if (typeof window !== 'undefined') {
@@ -3069,6 +3108,6 @@ if (typeof window !== 'undefined') {
     plan, heuristic, goAct, ruleArrivals,
     ruleNeeds, ruleMove, ruleGo, affordances, tileName, describe, chooseAct, applyAct, ruleBuild, regrowOk, ruleLand, rulePairing, ruleBirths, ruleDay, die,
     dispatch, step, cancelAct, inject, read, hash,
-    makeWorld, makeWorldWanderer, getBiome, generateWorldChunk, saveState, loadState
+    makeWorld, makeWorldWanderer, makeWorldWandererAsync, getBiome, generateWorldChunk, saveState, loadState
   };
 }
