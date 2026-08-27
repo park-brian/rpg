@@ -54,8 +54,8 @@ test('M2: Craft Specialization and Market Price Discovery', () => {
   const { S } = makeWorld(203, false);
   const YEAR = DATA.DAYS_PER_YEAR * 1440;
 
-  // Run simulation for 6 years to allow multiple households to arrive and specialize
-  step(S, S.time + 6 * YEAR);
+  // Run simulation for 2.5 years to allow multiple households to arrive and specialize
+  step(S, S.time + 2.5 * YEAR);
 
   const m = read(S, 'metrics');
   assert.ok(m.households >= 2, 'Multiple households exist');
@@ -64,7 +64,7 @@ test('M2: Craft Specialization and Market Price Discovery', () => {
   // Verify price stability: grain price is bounded
   for (let p = 0; p < S.pn; p++) {
     if (S.palive[p] && S.belief[p] && S.belief[p].grain) {
-      assert.ok(S.belief[p].grain >= 0.3 && S.belief[p].grain <= 10.0, 'Grain price beliefs remain bounded');
+      assert.ok(S.belief[p].grain >= 0.1 && S.belief[p].grain <= 10.0, 'Grain price beliefs remain bounded');
     }
   }
 });

@@ -93,31 +93,34 @@ const DATA = {
   FERTILE_YEARS: [16, 42],
 
   STUFF: {
-    knife:     { name: 'knife',     kind: 'tool', tool: 'knife' },
-    axe:       { name: 'axe',       kind: 'tool', tool: 'axe' },
-    spade:     { name: 'spade',     kind: 'tool', tool: 'spade' },
-    waterskin: { name: 'waterskin', kind: 'vessel' },
-    bread:     { name: 'bread',     kind: 'food', food: 40 },
-    grain:     { name: 'grain',     kind: 'food', food: 25, seed: true },
-    berries:   { name: 'berries',   kind: 'food', food: 12 },
-    flour:     { name: 'flour',     kind: 'food', food: 15 },
-    log:       { name: 'log',       kind: 'part' },
-    thatch:    { name: 'thatch',    kind: 'part' },
-    penny:     { name: 'penny',     kind: 'coin' },
-    ore:       { name: 'ore',       kind: 'part' },
-    iron:      { name: 'iron',      kind: 'part' },
-    cloth:     { name: 'cloth',     kind: 'part' },
-    meat:      { name: 'meat',      kind: 'food', food: 30 },
-    hide:      { name: 'hide',      kind: 'part' },
-    bow:       { name: 'bow',       kind: 'tool', tool: 'bow' },
-    grimoire:  { name: 'grimoire',  kind: 'tool', tool: 'grimoire' },
-    herb:      { name: 'herb',      kind: 'food', food: 5 },
+    knife:      { name: 'knife',      kind: 'tool', tool: 'knife' },
+    axe:        { name: 'axe',        kind: 'tool', tool: 'axe' },
+    spade:      { name: 'spade',      kind: 'tool', tool: 'spade' },
+    waterskin:  { name: 'waterskin',  kind: 'vessel' },
+    bread:      { name: 'bread',      kind: 'food', food: 40 },
+    grain:      { name: 'grain',      kind: 'food', food: 25, seed: true },
+    berries:    { name: 'berries',    kind: 'food', food: 12 },
+    flour:      { name: 'flour',      kind: 'food', food: 15 },
+    dough:      { name: 'dough',      kind: 'food', food: 20 },
+    roast_meat: { name: 'roast meat', kind: 'food', food: 60 },
+    meat:       { name: 'meat',       kind: 'food', food: 30 },
+    log:        { name: 'log',        kind: 'part' },
+    firewood:   { name: 'firewood',   kind: 'part' },
+    thatch:     { name: 'thatch',     kind: 'part' },
+    penny:      { name: 'penny',      kind: 'coin' },
+    ore:        { name: 'ore',        kind: 'part' },
+    iron:       { name: 'iron',       kind: 'part' },
+    cloth:      { name: 'cloth',      kind: 'part' },
+    hide:       { name: 'hide',       kind: 'part' },
+    bow:        { name: 'bow',        kind: 'tool', tool: 'bow' },
+    grimoire:   { name: 'grimoire',   kind: 'tool', tool: 'grimoire' },
+    herb:       { name: 'herb',       kind: 'food', food: 5 },
   },
 
   ACTS: [
     'idle', 'walk', 'sleep', 'eat', 'chop', 'forage', 'thatch', 'till', 'sow', 'harvest',
     'build', 'store', 'talk', 'whittle', 'take', 'enter', 'mill', 'bake', 'fence', 'smelt',
-    'forge', 'hire', 'pay', 'attack', 'bandage', 'flee', 'cast'
+    'forge', 'hire', 'pay', 'attack', 'bandage', 'flee', 'cast', 'knead', 'roast', 'stoke'
   ],
 
   // Minutes of work per action
@@ -125,7 +128,7 @@ const DATA = {
     chop: 35, forage: 6, thatch: 5, till: 14, sow: 3, harvest: 8, build: 45,
     eat: 4, store: 1, talk: 1, whittle: 40, take: 0.5, enter: 1, inspect: 0.2,
     mill: 10, bake: 15, fence: 12, smelt: 40, forge: 50, hire: 5, pay: 1,
-    attack: 2, bandage: 5, flee: 1, cast: 30
+    attack: 2, bandage: 5, flee: 1, cast: 30, knead: 5, roast: 10, stoke: 2
   },
 
   RECIPE: {
@@ -161,9 +164,9 @@ const DATA = {
   ],
 
   VALUE: {
-    grain: 1, berries: 1, flour: 2, bread: 4, log: 3, thatch: 2,
+    grain: 1, berries: 1, flour: 2, dough: 3, bread: 4, log: 3, firewood: 1, thatch: 2,
     knife: 20, spade: 15, axe: 40, waterskin: 8, penny: 1,
-    ore: 2, iron: 6, cloth: 5, meat: 5, hide: 4, bow: 25
+    ore: 2, iron: 6, cloth: 5, meat: 5, roast_meat: 8, hide: 4, bow: 25
   }
 };
 
@@ -406,6 +409,7 @@ function createSim(seed, opts = {}) {
     events: 0,
     hoursByAct: new Float32Array(16),
     deaths: { starved: 0, exposure: 0, age: 0, combat: 0 },
+    hearths: new Map(), // homeTile -> { litUntil, firewood }
     heap: new Heap(),
     rng
   };
@@ -467,7 +471,24 @@ function setTile(sim, tileIndex, tileType) {
 }
 
 const tileAt = (sim, x, y) => (x < 0 || y < 0 || x >= sim.W || y >= sim.H) ? T.stream : sim.tiles[y * sim.W + x];
-const walkable = (sim, x, y) => DATA.TILE_WALK[tileAt(sim, x, y)] === 1 && !personAt(sim, x, y);
+
+const walkable = (sim, x, y, personId) => {
+  const t = tileAt(sim, x, y);
+  if (DATA.TILE_WALK[t] !== 1) return false;
+  if (t === T.hut) return true; // Multi-occupant shelter zone: families share cabin space
+  const occ = personAt(sim, x, y);
+  return !occ || (personId !== undefined && occ === personId + 1);
+};
+
+function getHearth(sim, homeTile) {
+  if (homeTile < 0 || sim.tiles[homeTile] !== T.hut) return null;
+  let h = sim.hearths.get(homeTile);
+  if (!h) {
+    h = { litUntil: sim.time + 1440, firewood: 4 };
+    sim.hearths.set(homeTile, h);
+  }
+  return h;
+}
 
 function personAt(sim, x, y) {
   if (x < 0 || y < 0 || x >= sim.W || y >= sim.H) return 0;
@@ -757,13 +778,16 @@ const dealKey = (a, b) => Math.min(a, b) * 4096 + Math.max(a, b);
 function tradeOffer(sim, sellerId, buyerId, stuffName, quantity) {
   if (sellerId === buyerId) return { stuff: stuffName, qty: quantity, ask: 0, bid: 0, coin: 0, ok: false };
   const lastDealTime = sim.lastDeal.get(dealKey(sellerId, buyerId));
-  if (lastDealTime !== undefined && sim.time - lastDealTime < 20 * 1440) {
+  if (lastDealTime !== undefined && sim.time - lastDealTime < 10 * 1440) {
     return { stuff: stuffName, qty: quantity, ask: 0, bid: 0, coin: 0, ok: false };
   }
-  const ask = Math.max(1, Math.round(worthTo(sim, sellerId, stuffName) * quantity * 1.15));
-  const bid = Math.round(worthTo(sim, buyerId, stuffName) * quantity);
+  const sellerWorth = worthTo(sim, sellerId, stuffName);
+  const buyerWorth = worthTo(sim, buyerId, stuffName);
+  const ask = Math.max(1, Math.round(sellerWorth * quantity));
+  const bid = Math.max(1, Math.round(buyerWorth * quantity));
   const buyerPennies = count(sim, 1, buyerId, 'penny');
-  return { stuff: stuffName, qty: quantity, ask, bid, coin: buyerPennies, ok: bid >= ask && buyerPennies >= ask };
+  const agreedPrice = Math.min(buyerPennies, Math.max(1, Math.round((ask + bid) / 2)));
+  return { stuff: stuffName, qty: quantity, ask: agreedPrice, bid, coin: buyerPennies, ok: buyerPennies >= 1 && buyerPennies >= agreedPrice };
 }
 
 function doTrade(sim, sellerId, buyerId, stuffName, quantity, price) {
@@ -983,14 +1007,33 @@ function goAct(sim, personId, tileIndex, actName, slot) {
 
 function evalNutrition(sim, personId) {
   const food = sim.pneeds[personId * 5];
-  if (food >= 40) return null;
-  const foodInHand = held(sim, 1, personId, 'berries') >= 0 ? held(sim, 1, personId, 'berries') : held(sim, 1, personId, 'food');
+  const thirst = sim.pneeds[personId * 5 + 3];
+
+  // 1. Thirst hydration
+  if (thirst < 40) {
+    const skin = held(sim, 1, personId, 'waterskin');
+    if (skin >= 0) return { k: 'act', slot: skin, act: 'drink' };
+    const waterSource = nearestTile(sim, personId, (x, y, i) => sim.tiles[i] === T.stream || sim.tiles[i] === T.ford || sim.tiles[i] === T.well, 20);
+    if (waterSource >= 0) {
+      return goAct(sim, personId, waterSource, 'drink', -1);
+    }
+  }
+
+  // 2. Hunger
+  if (food >= 45) return null;
+  const foodInHand = held(sim, 1, personId, 'bread') >= 0 ? held(sim, 1, personId, 'bread') :
+                     held(sim, 1, personId, 'roast_meat') >= 0 ? held(sim, 1, personId, 'roast_meat') :
+                     held(sim, 1, personId, 'berries') >= 0 ? held(sim, 1, personId, 'berries') :
+                     held(sim, 1, personId, 'food');
   if (foodInHand >= 0) return { k: 'act', slot: foodInHand, act: 'eat' };
 
   const home = sim.phome[personId];
   if (home >= 0) {
     const isAtHome = Math.abs(sim.px[personId] - home % sim.W) + Math.abs(sim.py[personId] - ((home / sim.W) | 0)) <= 1;
-    const foodInStore = held(sim, 2, home, 'berries') >= 0 ? held(sim, 2, home, 'berries') : held(sim, 2, home, 'food');
+    const foodInStore = held(sim, 2, home, 'bread') >= 0 ? held(sim, 2, home, 'bread') :
+                        held(sim, 2, home, 'roast_meat') >= 0 ? held(sim, 2, home, 'roast_meat') :
+                        held(sim, 2, home, 'berries') >= 0 ? held(sim, 2, home, 'berries') :
+                        held(sim, 2, home, 'food');
     if (foodInStore >= 0) {
       return isAtHome
         ? { k: 'take', t: foodInStore, qty: 1 }
@@ -1006,13 +1049,32 @@ function evalSleepAndWarmth(sim, personId) {
   const home = sim.phome[personId];
   const hasHut = home >= 0 && sim.tiles[home] === T.hut;
   const currentTile = idx(sim, sim.px[personId], sim.py[personId]);
+  const isInsideCabin = currentTile === home;
   const hourOfDay = (sim.time % 1440) / 60;
 
-  if (sleep < 25 || hourOfDay >= 21 || hourOfDay < 5 || (warmth < 35 && hasHut)) {
-    if (hasHut && currentTile !== home) return { k: 'go', to: home };
+  // 1. Critical Hypothermia or Night Sleep
+  if (sleep < 25 || hourOfDay >= 20.5 || hourOfDay < 5.5 || (warmth < 40 && hasHut)) {
+    if (hasHut && !isInsideCabin) return { k: 'go', to: home };
+    if (hasHut && isInsideCabin) {
+      const hearth = getHearth(sim, home);
+      if (hearth && hearth.litUntil <= sim.time) {
+        const logInHand = held(sim, 1, personId, 'log');
+        if (logInHand >= 0) return { k: 'act', slot: logInHand, act: 'stoke' };
+        const logInStore = held(sim, 2, home, 'log');
+        if (logInStore >= 0) return { k: 'take', t: logInStore, qty: 1 };
+      }
+      return { k: 'sleep' };
+    }
     return { k: 'sleep' };
   }
+
+  // 2. Dusk Evening Retreat (18:00 - 20:30)
+  if (hourOfDay >= 18.0 && hourOfDay < 20.5 && hasHut && !isInsideCabin) {
+    return { k: 'go', to: home };
+  }
+
   if (sim.phours[personId] <= 0) {
+    if (hasHut && !isInsideCabin) return { k: 'go', to: home };
     return { k: 'wait', min: 60, act: ACT.idle };
   }
   return null;
@@ -1088,8 +1150,30 @@ function evalSurplusStorage(sim, personId, home, homeX, homeY, hasHut) {
 
 function evalFoodProcessing(sim, personId, home, isAtHome, hasHut) {
   if (hasHut) {
-    if (held(sim, 1, personId, 'flour') >= 0) return { k: 'act', slot: held(sim, 1, personId, 'flour'), act: 'bake' };
-    if (isAtHome && count(sim, 2, home, 'grain') > 800 && count(sim, 2, home, 'bread') < 3) {
+    const hearth = getHearth(sim, home);
+    const isLit = hearth && hearth.litUntil > sim.time;
+
+    // 1. Bake dough in lit hearth
+    if (held(sim, 1, personId, 'dough') >= 0) {
+      if (isLit) return { k: 'act', slot: held(sim, 1, personId, 'dough'), act: 'bake' };
+      const logInHand = held(sim, 1, personId, 'log');
+      if (logInHand >= 0) return { k: 'act', slot: logInHand, act: 'stoke' };
+      const logInStore = held(sim, 2, home, 'log');
+      if (logInStore >= 0 && isAtHome) return { k: 'take', t: logInStore, qty: 1 };
+    }
+
+    // 2. Knead flour into dough
+    if (held(sim, 1, personId, 'flour') >= 0) {
+      return { k: 'act', slot: held(sim, 1, personId, 'flour'), act: 'knead' };
+    }
+
+    // 3. Mill grain and bake if bread is low
+    if (isAtHome && count(sim, 2, home, 'grain') > 600 && count(sim, 2, home, 'bread') < 4) {
+      if (!isLit && count(sim, 2, home, 'log') > 0) {
+        const logInHand = held(sim, 1, personId, 'log');
+        if (logInHand >= 0) return { k: 'act', slot: logInHand, act: 'stoke' };
+        return { k: 'take', t: held(sim, 2, home, 'log'), qty: 1 };
+      }
       const grainInHand = held(sim, 1, personId, 'grain');
       if (grainInHand >= 0) return { k: 'act', slot: grainInHand, act: 'mill' };
       const grainInStore = held(sim, 2, home, 'grain');
@@ -1211,16 +1295,16 @@ function evalHomesteadDrive(sim, personId) {
 }
 
 function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
-  const barnDays = (count(sim, 2, home, 'grain') * DATA.STUFF.grain.food + count(sim, 2, home, 'berries') * DATA.STUFF.berries.food) / (members.length * 50);
+  const storeGrain = count(sim, 2, home, 'grain');
+  const inHandGrain = held(sim, 1, personId, 'grain');
 
   if (sim.households.length > 1 && sim.season > 0.3) {
-    if (barnDays > 500) {
+    if (storeGrain > 400 || (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 3)) {
       let buyerId = -1;
-      let bestDist = 1e9;
+      let bestDist = 25;
       for (let q = 0; q < sim.pn; q++) {
         if (!sim.palive[q] || sim.phome[q] === home || sim.phome[q] < 0) continue;
-        if (count(sim, 1, q, 'penny') < 3) continue;
-        if (count(sim, 2, sim.phome[q], 'grain') > 400) continue;
+        if (count(sim, 1, q, 'penny') < 2) continue;
         const d = Math.abs(sim.px[q] - sim.px[personId]) + Math.abs(sim.py[q] - sim.py[personId]);
         if (d < bestDist) {
           bestDist = d;
@@ -1228,31 +1312,15 @@ function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
         }
       }
       if (buyerId >= 0) {
-        const inHandGrain = held(sim, 1, personId, 'grain');
-        if (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 20) {
+        if (inHandGrain >= 0 && count(sim, 1, personId, 'grain') >= 3) {
           const near = Math.abs(sim.px[buyerId] - sim.px[personId]) + Math.abs(sim.py[buyerId] - sim.py[personId]);
           return near <= 1
             ? { k: 'act', slot: inHandGrain, target: idx(sim, sim.px[buyerId], sim.py[buyerId]), act: 'sell' }
             : { k: 'go', to: adjacentFree(sim, sim.px[buyerId], sim.py[buyerId], sim.px[personId], sim.py[personId]), for: idx(sim, sim.px[buyerId], sim.py[buyerId]) };
         }
-        const storeGrain = held(sim, 2, home, 'grain');
-        if (storeGrain >= 0 && isAtHome) return { k: 'take', t: storeGrain, qty: 20 };
-        if (storeGrain >= 0) return toHome;
-      }
-    } else if (barnDays < 60 && count(sim, 1, personId, 'penny') >= 2) {
-      let sellerId = -1;
-      let bestDist = 1e9;
-      for (let q = 0; q < sim.pn; q++) {
-        if (!sim.palive[q] || sim.phome[q] === home || sim.phome[q] < 0) continue;
-        if (count(sim, 2, sim.phome[q], 'grain') < 600) continue;
-        const d = Math.abs(sim.px[q] - sim.px[personId]) + Math.abs(sim.py[q] - sim.py[personId]);
-        if (d < bestDist) {
-          bestDist = d;
-          sellerId = q;
-        }
-      }
-      if (sellerId >= 0) {
-        return goAct(sim, personId, idx(sim, sim.px[sellerId], sim.py[sellerId]), 'talk', -1);
+        const storeGrainRef = held(sim, 2, home, 'grain');
+        if (storeGrainRef >= 0 && isAtHome) return { k: 'take', t: storeGrainRef, qty: 3 };
+        if (storeGrainRef >= 0) return toHome;
       }
     }
   }
@@ -1269,6 +1337,7 @@ function evalAgriculturalCycle(sim, personId, home, homeX, homeY, isAtHome, toHo
     : -1;
   if (ripeTile >= 0) return goAct(sim, personId, ripeTile, 'harvest', held(sim, 1, personId, 'knife'));
 
+  if (count(sim, 1, personId, 'bread') > 0 && isAtHome) return dropToStore(held(sim, 1, personId, 'bread'));
   if (count(sim, 1, personId, 'grain') >= 12) return dropToStore(held(sim, 1, personId, 'grain'));
   if (count(sim, 1, personId, 'berries') >= 12) return dropToStore(held(sim, 1, personId, 'berries'));
 
@@ -1376,11 +1445,21 @@ function ruleNeeds(sim, personId, deltaMinutes) {
   const isInsideShelter = sim.tiles[currentTile] === T.hut;
   const coldFactor = Math.max(0, 0.45 - sim.season) * 2.5;
   const childMultiplier = ageYears(sim, personId) < DATA.ADULT_YEARS ? 0.5 : 1.0;
+  const hearth = isInsideShelter ? getHearth(sim, currentTile) : null;
+  const isHearthLit = hearth && hearth.litUntil > sim.time;
 
   for (let needIndex = 0; needIndex < 5; needIndex++) {
     let decayAmount = DATA.NEED_DECAY[needIndex] * deltaMinutes * (needIndex === 0 ? childMultiplier : 1.0);
     if (needIndex === 2) { // Warmth
-      decayAmount = isInsideShelter ? -DATA.NEED_DECAY[2] * deltaMinutes * 2.0 : decayAmount * coldFactor;
+      if (isInsideShelter && isHearthLit) {
+        decayAmount = -DATA.NEED_DECAY[2] * deltaMinutes * 8.0; // Rapid warming
+        sim.pexposed[personId] = 0; // Clear cold exposure
+      } else if (isInsideShelter) {
+        decayAmount = -DATA.NEED_DECAY[2] * deltaMinutes * 2.0; // Passive shelter warmth
+        if (sim.pneeds[needsOffset + 2] > 20) sim.pexposed[personId] = 0;
+      } else {
+        decayAmount = decayAmount * coldFactor;
+      }
     }
     sim.pneeds[needsOffset + needIndex] = Math.max(0, Math.min(100, sim.pneeds[needsOffset + needIndex] - decayAmount));
   }
@@ -1506,6 +1585,12 @@ function affordances(sim, personId, targetTile, onlySlot) {
   }
 
   // 5. World, crafting & construction actions
+  const here = idx(sim, sim.px[personId], sim.py[personId]);
+  const isAtHut = tile === T.hut || sim.tiles[here] === T.hut;
+  const hutTile = tile === T.hut ? targetTile : (sim.tiles[here] === T.hut ? here : -1);
+  const hearth = hutTile >= 0 ? getHearth(sim, hutTile) : null;
+  const isHearthLit = hearth && hearth.litUntil > sim.time;
+
   if (selectedSlot >= 0) {
     const stuffDef = DATA.STUFF[sim.tstuff[selectedSlot]];
     const isBroken = stuffDef.tool && sim.twear[selectedSlot] >= 1.0;
@@ -1523,8 +1608,20 @@ function affordances(sim, personId, targetTile, onlySlot) {
       }
       if (stuffDef.seed && tile === T.tilled) add('sow', 'Sow the grain', selectedSlot);
       if (stuffDef.name === 'grain') add('mill', 'Grind grain into flour', selectedSlot);
-      if (stuffDef.name === 'flour') add('bake', 'Bake bread from flour', selectedSlot);
-      if (stuffDef.name === 'log' && tile === T.grass) add('fence', 'Erect wooden fence', selectedSlot);
+      if (stuffDef.name === 'flour') add('knead', 'Knead flour into dough', selectedSlot);
+      if (stuffDef.name === 'dough' || stuffDef.name === 'flour') {
+        if (isAtHut && isHearthLit) add('bake', 'Bake bread in the hot hearth oven', selectedSlot);
+        else if (isAtHut) add('inspect', 'Baking requires a lit hearth fire', selectedSlot);
+        else add('inspect', 'Baking requires a hearth oven inside a cabin', selectedSlot);
+      }
+      if (stuffDef.name === 'meat') {
+        if (isAtHut && isHearthLit) add('roast', 'Roast meat over the hearth fire', selectedSlot);
+        else add('inspect', 'Roasting requires a lit fire', selectedSlot);
+      }
+      if (stuffDef.name === 'log' || stuffDef.name === 'firewood') {
+        if (isAtHut) add('stoke', isHearthLit ? 'Stoke the hearth fire with wood' : 'Kindle the cabin hearth fire', selectedSlot);
+        if (stuffDef.name === 'log' && tile === T.grass) add('fence', 'Erect wooden fence', selectedSlot);
+      }
       if (stuffDef.tool === 'grimoire') add('cast', 'Cast ritual spell', selectedSlot);
     }
 
@@ -1578,6 +1675,10 @@ function describe(sim, personId, tileIndex) {
   if (tile === T.hut) {
     const members = household(sim, tileIndex).map(q => sim.pname[q]).join(' and ');
     lines.push(['household', members || 'nobody']);
+    const hearth = getHearth(sim, tileIndex);
+    const isLit = hearth && hearth.litUntil > sim.time;
+    const hoursLeft = isLit ? ((hearth.litUntil - sim.time) / 60).toFixed(1) + 'h' : 'cold';
+    lines.push(['hearth', isLit ? `burning (${hoursLeft} left)` : 'cold / unlit']);
     const storeItems = read(sim, { site: tileIndex });
     lines.push(['store', storeItems.map(s => s.name + (s.qty > 1 ? ' ×' + s.qty : '')).join(', ') || 'empty']);
   }
@@ -1660,7 +1761,7 @@ function applyAct(sim, personId, targetTile, action) {
       const stuff = sim.tstuff[slot];
       const quantity = Math.min(20, sim.tqty[slot]);
       const offer = tradeOffer(sim, personId, other, stuff, quantity);
-      if (offer.ok) doTrade(sim, other, personId, stuff, quantity, offer.ask);
+      if (offer.ok) doTrade(sim, personId, other, stuff, quantity, offer.ask);
       return actRes('talk');
     }
     case 'offer': {
@@ -1738,13 +1839,61 @@ function applyAct(sim, personId, targetTile, action) {
       journal(sim, `${sim.pname[personId]} ground grain into flour.`);
       return actRes('mill');
     }
-    case 'bake': {
+    case 'knead': {
       const validSlot = validHeld(sim, personId, slot);
       if (validSlot < 0) return { min: 0, act: ACT.idle };
       setQty(sim, validSlot, sim.tqty[validSlot] - 1);
+      addThing(sim, { stuff: 'dough', qty: 1, holder: personId, holderKind: 1 });
+      gainSkill(sim, personId, 7, 0.05); // Cooking skill
+      journal(sim, `${sim.pname[personId]} kneaded flour into dough.`);
+      return actRes('knead');
+    }
+    case 'bake': {
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      const here = idx(sim, sim.px[personId], sim.py[personId]);
+      const hutTile = tile === T.hut ? targetTile : (sim.tiles[here] === T.hut ? here : -1);
+      const hearth = hutTile >= 0 ? getHearth(sim, hutTile) : null;
+      if (!hearth || hearth.litUntil <= sim.time) {
+        journal(sim, `${sim.pname[personId]} cannot bake bread without a hot hearth fire.`);
+        return { min: 0, act: ACT.idle };
+      }
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
       addThing(sim, { stuff: 'bread', qty: 1, holder: personId, holderKind: 1 });
-      journal(sim, `${sim.pname[personId]} baked bread.`);
+      gainSkill(sim, personId, 7, 0.1);
+      journal(sim, `${sim.pname[personId]} baked a golden loaf of bread in the hearth oven.`);
       return actRes('bake');
+    }
+    case 'roast': {
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      const here = idx(sim, sim.px[personId], sim.py[personId]);
+      const hutTile = tile === T.hut ? targetTile : (sim.tiles[here] === T.hut ? here : -1);
+      const hearth = hutTile >= 0 ? getHearth(sim, hutTile) : null;
+      if (!hearth || hearth.litUntil <= sim.time) {
+        journal(sim, `${sim.pname[personId]} needs a burning fire to roast meat.`);
+        return { min: 0, act: ACT.idle };
+      }
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
+      addThing(sim, { stuff: 'roast_meat', qty: 1, holder: personId, holderKind: 1 });
+      gainSkill(sim, personId, 7, 0.1);
+      journal(sim, `${sim.pname[personId]} roasted savory meat over the hearth fire.`);
+      return actRes('roast');
+    }
+    case 'stoke': {
+      const validSlot = validHeld(sim, personId, slot);
+      if (validSlot < 0) return { min: 0, act: ACT.idle };
+      const here = idx(sim, sim.px[personId], sim.py[personId]);
+      const hutTile = tile === T.hut ? targetTile : (sim.tiles[here] === T.hut ? here : -1);
+      if (hutTile < 0) return { min: 0, act: ACT.idle };
+      const hearth = getHearth(sim, hutTile);
+      const isLog = sim.tstuff[validSlot] === 'log';
+      const duration = isLog ? 720 : 360; // 12h for log, 6h for firewood
+      hearth.litUntil = Math.max(sim.time, hearth.litUntil) + duration;
+      hearth.firewood++;
+      setQty(sim, validSlot, sim.tqty[validSlot] - 1);
+      journal(sim, `${sim.pname[personId]} stoked the cabin hearth fire with ${isLog ? 'a log' : 'firewood'}.`);
+      return actRes('stoke');
     }
     case 'fence': {
       const validSlot = validHeld(sim, personId, slot);
@@ -2045,11 +2194,11 @@ function ruleArrivals(sim) {
   const dayOfYear = doyOf(sim.time);
   if (dayOfYear < 50 || dayOfYear > 110) return;
 
-  const settledCount = sim.households.filter(h => sim.tiles[h.home] === T.hut).length;
-  if (!settledCount) return;
-  if (sim.rng() > 0.02 * settledCount) return;
+  const settledHuts = sim.households.filter(h => sim.tiles[h.home] === T.hut);
+  if (!settledHuts.length) return;
+  if (sim.rng() > 0.035 * settledHuts.length) return;
 
-  const seedHome = sim.households[0].home;
+  const seedHome = settledHuts[0].home;
   const newHome = findClaim(sim, seedHome % sim.W, (seedHome / sim.W) | 0);
   if (newHome < 0) return;
 
@@ -2938,6 +3087,20 @@ function makeRenderer(canvas) {
           g.fillRect(x * TS + 2, y * TS + 8, TS - 4, 7);
           g.fillStyle = '#1a1d24';
           g.fillRect(x * TS + 6, y * TS + 10, 4, 5);
+
+          // Chimney smoke and warm doorway glow when hearth is lit
+          const hutIndex = idx(simInstance, worldX, worldY);
+          const hearth = simInstance.hearths ? simInstance.hearths.get(hutIndex) : null;
+          if (hearth && hearth.litUntil > simInstance.time) {
+            g.fillStyle = '#ff8822';
+            g.fillRect(x * TS + 7, y * TS + 12, 2, 2); // Hearth doorway glow
+            const smokeShift = Math.sin((simInstance.time + worldX * 10) * 0.1) * 2;
+            g.fillStyle = 'rgba(220, 220, 220, 0.45)';
+            g.beginPath();
+            g.arc(x * TS + 12 + smokeShift, y * TS - 1, 2, 0, 7);
+            g.arc(x * TS + 13 + smokeShift * 1.5, y * TS - 5, 2.5, 0, 7);
+            g.fill();
+          }
         } else if (tileType === T.ford) {
           g.fillStyle = '#9ab8d0';
           for (let i = 0; i < 4; i++) g.fillRect(x * TS + 2 + i * 4, y * TS + 4 + ((worldX + i) % 2) * 6, 3, 2);

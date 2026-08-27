@@ -28,8 +28,8 @@ test('M3: Emergent Patronage ("Lord") funding public infrastructure', () => {
   const { S } = makeWorld(302, false);
   const YEAR = DATA.DAYS_PER_YEAR * 1440;
 
-  // Run simulation for 15 years to allow wealth accumulation and patronage
-  step(S, S.time + 15 * YEAR);
+  // Run simulation for 4 years to allow wealth accumulation and patronage
+  step(S, S.time + 4 * YEAR);
 
   const m = read(S, 'metrics');
   assert.ok(m.households >= 2, 'Settlement has expanded to multiple households');

@@ -5,8 +5,14 @@ import {
 } from '../../src/sim.js';
 
 test('M1: Food Processing — Milling Grain to Flour and Baking Bread', () => {
-  const { S, player } = makeWorld(101);
+  const { S, player, home } = makeWorld(101);
   assert.ok(player >= 0, 'Player should exist');
+
+  // Place player at home cabin with lit hearth
+  setTile(S, home, T.hut);
+  S.px[player] = home % S.W;
+  S.py[player] = (home / S.W) | 0;
+  S.hearths.set(home, { litUntil: S.time + 1440, firewood: 4 });
 
   // Add grain to player hands
   const grainId = addThing(S, { stuff: 'grain', qty: 10, holder: player, holderKind: 1 });
@@ -23,14 +29,14 @@ test('M1: Food Processing — Milling Grain to Flour and Baking Bread', () => {
 
   assert.ok(count(S, 1, player, 'flour') > 0, 'Milling produces flour');
 
-  // Check affordances for baking flour into bread
+  // Check affordances for baking flour/dough into bread
   const flourId = held(S, 1, player, 'flour');
   assert.ok(flourId >= 0, 'Flour is held');
   const bakeActs = read(S, { acts: player, slot: flourId });
-  const bakeAct = bakeActs.find(a => a.act === 'bake');
-  assert.ok(bakeAct, 'Holding flour affords baking into bread');
+  const bakeAct = bakeActs.find(a => a.act === 'bake' || a.act === 'knead');
+  assert.ok(bakeAct, 'Holding flour affords food preparation');
 
-  // Execute bake act
+  // Execute bake act at hot hearth
   inject(S, player, { k: 'act', slot: flourId, act: 'bake' });
   step(S, S.time + DATA.ACT_MIN.bake + 1);
 

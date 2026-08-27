@@ -278,6 +278,20 @@ function makeRenderer(canvas) {
           g.fillRect(x * TS + 2, y * TS + 8, TS - 4, 7);
           g.fillStyle = '#1a1d24';
           g.fillRect(x * TS + 6, y * TS + 10, 4, 5);
+
+          // Chimney smoke and warm doorway glow when hearth is lit
+          const hutIndex = idx(simInstance, worldX, worldY);
+          const hearth = simInstance.hearths ? simInstance.hearths.get(hutIndex) : null;
+          if (hearth && hearth.litUntil > simInstance.time) {
+            g.fillStyle = '#ff8822';
+            g.fillRect(x * TS + 7, y * TS + 12, 2, 2); // Hearth doorway glow
+            const smokeShift = Math.sin((simInstance.time + worldX * 10) * 0.1) * 2;
+            g.fillStyle = 'rgba(220, 220, 220, 0.45)';
+            g.beginPath();
+            g.arc(x * TS + 12 + smokeShift, y * TS - 1, 2, 0, 7);
+            g.arc(x * TS + 13 + smokeShift * 1.5, y * TS - 5, 2.5, 0, 7);
+            g.fill();
+          }
         } else if (tileType === T.ford) {
           g.fillStyle = '#9ab8d0';
           for (let i = 0; i < 4; i++) g.fillRect(x * TS + 2 + i * 4, y * TS + 4 + ((worldX + i) % 2) * 6, 3, 2);
