@@ -1173,12 +1173,41 @@ function evalHutConstruction(sim, personId, home, isAtHome, toHome, dropToStore,
 function evalSpadeCrafting(sim, personId, hasHut) {
   if (held(sim, 1, personId, 'spade') < 0 && held(sim, 1, personId, 'knife') >= 0) {
     if (held(sim, 1, personId, 'log') >= 0) return { k: 'act', slot: held(sim, 1, personId, 'log'), act: 'whittle' };
-    if (hasHut && held(sim, 1, personId, 'axe') >= 0) {
+    if (held(sim, 1, personId, 'axe') >= 0) {
       const tree = nearestTile(sim, personId, (x, y, i) => sim.tiles[i] === T.tree, 28, 1);
       if (tree >= 0) return goAct(sim, personId, tree, 'chop', held(sim, 1, personId, 'axe'));
     }
   }
   return null;
+}
+
+function evalHomesteadDrive(sim, personId) {
+  if (sim.phome[personId] >= 0 || sim.pkind[personId] > 0) return null;
+
+  // Search for an open, unowned grass tile
+  const nearGrass = nearestTile(sim, personId, (x, y, i) => {
+    if (sim.tiles[i] !== T.grass) return false;
+    for (let h = 0; h < sim.households.length; h++) {
+      const hx = sim.households[h].home % sim.W;
+      const hy = (sim.households[h].home / sim.W) | 0;
+      if (Math.abs(x - hx) + Math.abs(y - hy) < 8) return false;
+    }
+    return true;
+  }, 32);
+
+  if (nearGrass >= 0) {
+    const gx = nearGrass % sim.W;
+    const gy = (nearGrass / sim.W) | 0;
+    const isAdjacent = Math.abs(sim.px[personId] - gx) + Math.abs(sim.py[personId] - gy) <= 1;
+    if (isAdjacent) {
+      sim.phome[personId] = nearGrass;
+      sim.households.push({ home: nearGrass, founded: sim.time });
+      journal(sim, `${sim.pname[personId]} staked a homestead claim.`);
+      return { k: 'wait', min: 30, act: ACT.idle };
+    }
+    return { k: 'go', to: adjacentFree(sim, gx, gy, sim.px[personId], sim.py[personId]) };
+  }
+  return { k: 'move', d: sim.rng.int(4) };
 }
 
 function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
@@ -1210,7 +1239,7 @@ function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
         if (storeGrain >= 0 && isAtHome) return { k: 'take', t: storeGrain, qty: 20 };
         if (storeGrain >= 0) return toHome;
       }
-    } else if (barnDays < 60 && count(sim, 1, personId, 'penny') >= 5) {
+    } else if (barnDays < 60 && count(sim, 1, personId, 'penny') >= 2) {
       let sellerId = -1;
       let bestDist = 1e9;
       for (let q = 0; q < sim.pn; q++) {
@@ -1305,7 +1334,10 @@ function heuristic(sim, personId) {
   if (childIntent) return childIntent;
 
   const home = sim.phome[personId];
-  if (home < 0) return { k: 'wait', min: 30, act: ACT.idle };
+  if (home < 0) {
+    const homesteadIntent = evalHomesteadDrive(sim, personId);
+    return homesteadIntent || { k: 'wait', min: 30, act: ACT.idle };
+  }
 
   const homeX = home % sim.W;
   const homeY = (home / sim.W) | 0;
@@ -2315,6 +2347,29 @@ function read(sim, query) {
       rain: sim.rain[yearOf(sim.time)] || 1
     };
   }
+  if (query === 'directory' || query.directory) {
+    const list = [];
+    for (let p = 0; p < sim.pn; p++) {
+      if (!sim.palive[p]) continue;
+      const b = p * 5;
+      const inventory = hands(sim, p).map(t => ({ id: t, name: DATA.STUFF[sim.tstuff[t]].name, qty: sim.tqty[t], kind: DATA.STUFF[sim.tstuff[t]].kind }));
+      list.push({
+        id: p,
+        name: sim.pname[p],
+        age: ageYears(sim, p) | 0,
+        kind: sim.pkind[p],
+        kindName: sim.pkind[p] > 0 ? DATA.BEASTS[sim.pkind[p]] : 'Villager',
+        x: sim.px[p],
+        y: sim.py[p],
+        act: DATA.ACTS[sim.pact[p]] || 'idle',
+        needs: Array.from(sim.pneeds.slice(b, b + 5)),
+        hands: inventory,
+        home: sim.phome[p],
+        planner: sim.pplanner[p]
+      });
+    }
+    return list;
+  }
   if (query.person !== undefined && query.acts === undefined && query.inspect === undefined) {
     const p = query.person;
     const b = p * 5;
@@ -2794,7 +2849,9 @@ function makeRenderer(canvas) {
   const renderX = new Float32Array(MAXP);
   const renderY = new Float32Array(MAXP);
 
-  const draw = function(simInstance, focusPersonId, realDt, rate) {
+  let lastCx = 0, lastCy = 0, lastOffsetX = 0, lastOffsetY = 0;
+
+  const draw = function(simInstance, focusPersonId, realDt, rate, camX, camY) {
     // Interpolate animated movement position along the travel span
     for (let p = 0; p < simInstance.pn; p++) {
       const span = simInstance.pgoEnd[p] - simInstance.pgoStart[p];
@@ -2810,8 +2867,12 @@ function makeRenderer(canvas) {
       }
     }
 
-    const targetCamX = renderX[focusPersonId] - (VIEW_W >> 1);
-    const targetCamY = renderY[focusPersonId] - (VIEW_H >> 1);
+    const targetCamX = (focusPersonId >= 0 && focusPersonId < simInstance.pn)
+      ? renderX[focusPersonId] - (VIEW_W >> 1)
+      : (camX ?? (simInstance.W / 2)) - (VIEW_W >> 1);
+    const targetCamY = (focusPersonId >= 0 && focusPersonId < simInstance.pn)
+      ? renderY[focusPersonId] - (VIEW_H >> 1)
+      : (camY ?? (simInstance.H / 2)) - (VIEW_H >> 1);
     const cameraCenterX = simInstance.W >= VIEW_W
       ? Math.max(0, Math.min(simInstance.W - VIEW_W, targetCamX))
       : (simInstance.W - VIEW_W) / 2;
@@ -2822,6 +2883,11 @@ function makeRenderer(canvas) {
     const cy = Math.floor(cameraCenterY);
     const offsetX = -(cameraCenterX - cx) * TS;
     const offsetY = -(cameraCenterY - cy) * TS;
+
+    lastCx = cx;
+    lastCy = cy;
+    lastOffsetX = offsetX;
+    lastOffsetY = offsetY;
 
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#000';
@@ -2958,6 +3024,16 @@ function makeRenderer(canvas) {
 
   draw.rx = renderX;
   draw.ry = renderY;
+  draw.worldFromScreen = function(clientX, clientY, simInstance) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const canvasX = (clientX - rect.left) * scaleX - lastOffsetX;
+    const canvasY = (clientY - rect.top) * scaleY - lastOffsetY;
+    const wx = Math.floor(canvasX / TS) + lastCx;
+    const wy = Math.floor(canvasY / TS) + lastCy;
+    return { wx, wy, inside: wx >= 0 && wy >= 0 && wx < simInstance.W && wy < simInstance.H };
+  };
   return draw;
 }
 
@@ -2971,11 +3047,38 @@ function play(root, seed) {
   let focus = player;
   let selIdx = -1;
   let speed = 1;
+  let camX = S.W / 2;
+  let camY = S.H / 2;
 
   const getSelectedThingId = () => {
+    if (focus < 0) return -1;
     const h = hands(S, focus);
     return (selIdx >= 0 && selIdx < h.length) ? h[selIdx] : -1;
   };
+
+  function possess(personId) {
+    if (personId < 0 || personId >= S.pn || !S.palive[personId]) return;
+    if (focus >= 0 && focus < S.pn) {
+      S.pplanner[focus] = 0; // Previous body resumes autonomous AI
+    }
+    focus = personId;
+    S.pplanner[focus] = 1; // Take direct control
+    selIdx = -1;
+    renderHands();
+    journal(S, `You hopped into the mind of ${S.pname[focus]}.`);
+  }
+
+  function releaseToGhost() {
+    if (focus >= 0 && focus < S.pn) {
+      S.pplanner[focus] = 0; // Resume autonomous AI life
+      camX = S.px[focus];
+      camY = S.py[focus];
+      journal(S, `You left ${S.pname[focus]} and ascended to Ghost Observer Mode.`);
+    }
+    focus = -1;
+    selIdx = -1;
+    renderHands();
+  }
 
   root.innerHTML = `
     <div id="world"><canvas id="c"></canvas><div id="toast"></div><div id="clock"></div>
@@ -3007,13 +3110,14 @@ function play(root, seed) {
   let panelSel = 0;
   let panelItems = [];
 
-  function move(d) { inject(S, focus, { k: 'move', d }); }
-  function hold(d) { inject(S, focus, { k: 'hold', d }); }
-  function release(d) { inject(S, focus, { k: 'release', d }); }
+  function move(d) { if (focus >= 0) inject(S, focus, { k: 'move', d }); }
+  function hold(d) { if (focus >= 0) inject(S, focus, { k: 'hold', d }); }
+  function release(d) { if (focus >= 0) inject(S, focus, { k: 'release', d }); }
 
   function actA() {
     release();
     if (panelMode) return panelConfirm();
+    if (focus < 0) { openInhabitants(); return; }
     const list = read(S, { acts: focus, slot: getSelectedThingId() });
     if (!list.length) return;
     const a = list[0];
@@ -3026,6 +3130,7 @@ function play(root, seed) {
   }
 
   function openActs() {
+    if (focus < 0) { openInhabitants(); return; }
     const list = read(S, { acts: focus, slot: getSelectedThingId() });
     panelMode = 'acts';
     panelSel = 0;
@@ -3046,7 +3151,7 @@ function play(root, seed) {
   function openInspect(tileIndex) {
     panelMode = 'inspect';
     panelSel = 0;
-    const d = read(S, { inspect: tileIndex, person: focus });
+    const d = read(S, { inspect: tileIndex, person: focus >= 0 ? focus : -1 });
     panelItems = [{ label: 'Close', go: closePanel }];
     renderPanel(d.title, '', d.lines.map(([k, v]) => `<div class="row"><span class="k">${k.padEnd(10)}</span>${v}</div>`).join('') + `<div class="row sel" data-i="0">Close</div>`);
   }
@@ -3055,13 +3160,23 @@ function play(root, seed) {
 
   function actB() {
     if (panelMode) return closePanel();
-    cancelAct(S, focus);
-    work.style.display = 'none';
-    if (selIdx >= 0) { selIdx = -1; renderHands(); }
+    if (focus >= 0) {
+      cancelAct(S, focus);
+      work.style.display = 'none';
+      if (selIdx >= 0) { selIdx = -1; renderHands(); }
+    } else {
+      openMenu();
+    }
   }
 
   function startHold(d) {
     if (panelMode) { panelNav(d); return; }
+    if (focus < 0) {
+      const [dx, dy] = DIRS[d];
+      camX = Math.max(0, Math.min(S.W - 1, camX + dx * 2));
+      camY = Math.max(0, Math.min(S.H - 1, camY + dy * 2));
+      return;
+    }
     hold(d);
   }
 
@@ -3100,12 +3215,31 @@ function play(root, seed) {
 
     if (e.code in KEYS) {
       e.preventDefault();
-      if (panelMode) { if (!e.repeat) panelNav(KEYS[e.code]); }
-      else if (!e.repeat) hold(KEYS[e.code]);
+      if (panelMode) {
+        if (!e.repeat) panelNav(KEYS[e.code]);
+      } else if (focus < 0) {
+        const [dx, dy] = DIRS[KEYS[e.code]];
+        camX = Math.max(0, Math.min(S.W - 1, camX + dx));
+        camY = Math.max(0, Math.min(S.H - 1, camY + dy));
+      } else if (!e.repeat) {
+        hold(KEYS[e.code]);
+      }
+    } else if (e.code === 'KeyP') {
+      e.preventDefault();
+      const dir = read(S, 'directory') || [];
+      const eligible = dir.filter(p => p.id !== focus && p.kind === 0);
+      if (eligible.length > 0) {
+        possess(eligible[0].id);
+      }
+    } else if (e.code === 'KeyV') {
+      e.preventDefault();
+      panelMode === 'inhabitants' ? closePanel() : openInhabitants();
     } else if (e.code === 'KeyZ') {
       e.preventDefault();
-      S.pplanner[focus] = S.pplanner[focus] === 1 ? 0 : 1;
-      journal(S, S.pplanner[focus] === 0 ? 'Autonomous AI auto-pilot engaged.' : 'Direct manual control restored.');
+      if (focus >= 0) {
+        S.pplanner[focus] = S.pplanner[focus] === 1 ? 0 : 1;
+        journal(S, S.pplanner[focus] === 0 ? 'Autonomous AI auto-pilot engaged.' : 'Direct manual control restored.');
+      }
     } else if (e.code === 'KeyE' || e.code === 'Space') {
       e.preventDefault();
       actA();
@@ -3116,14 +3250,63 @@ function play(root, seed) {
       panelMode === 'acts' ? closePanel() : openActs();
     } else if (e.code === 'Escape' || e.code === 'Tab') {
       e.preventDefault();
-      panelMode ? closePanel() : openMenu();
+      if (panelMode) closePanel();
+      else if (focus >= 0 && e.code === 'Escape') releaseToGhost();
+      else openMenu();
     } else if (/^Digit[1-7]$/.test(e.code)) {
-      selectSlot(+e.code[5] - 1);
+      if (focus >= 0) selectSlot(+e.code[5] - 1);
     }
   });
 
   window.addEventListener('keyup', e => { if (e.code in KEYS) release(KEYS[e.code]); });
   window.addEventListener('blur', () => release());
+
+  let isDragging = false;
+  let dragStartX = 0, dragStartY = 0;
+  let dragStartCamX = 0, dragStartCamY = 0;
+
+  canvas.addEventListener('pointerdown', e => {
+    if (panelMode) return;
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartCamX = (focus >= 0 && focus < S.pn) ? S.px[focus] : camX;
+    dragStartCamY = (focus >= 0 && focus < S.pn) ? S.py[focus] : camY;
+  });
+
+  window.addEventListener('pointermove', e => {
+    if (!isDragging) return;
+    const dx = (e.clientX - dragStartX) / 16;
+    const dy = (e.clientY - dragStartY) / 16;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      if (focus >= 0) releaseToGhost();
+      camX = Math.max(0, Math.min(S.W - 1, dragStartCamX - dx));
+      camY = Math.max(0, Math.min(S.H - 1, dragStartCamY - dy));
+    }
+  });
+
+  window.addEventListener('pointerup', e => {
+    if (!isDragging) return;
+    isDragging = false;
+    const dx = Math.abs(e.clientX - dragStartX);
+    const dy = Math.abs(e.clientY - dragStartY);
+    if (dx < 6 && dy < 6 && !panelMode) {
+      const { wx, wy, inside } = draw.worldFromScreen(e.clientX, e.clientY, S);
+      if (inside) {
+        const targetP = personAt(S, wx, wy) - 1;
+        if (targetP >= 0 && S.palive[targetP]) {
+          if (targetP !== focus) {
+            possess(targetP);
+          } else {
+            view('me');
+          }
+        } else if (focus < 0) {
+          camX = wx;
+          camY = wy;
+        }
+      }
+    }
+  });
 
   const showPad = () => {
     pad.classList.remove('hidden');
@@ -3133,6 +3316,7 @@ function play(root, seed) {
   if (matchMedia('(pointer:coarse)').matches) showPad();
 
   function selectSlot(i) {
+    if (focus < 0) return;
     const h = hands(S, focus);
     selIdx = (selIdx === i || i >= h.length) ? -1 : i;
     renderHands();
@@ -3140,6 +3324,14 @@ function play(root, seed) {
 
   let handsSig = '';
   function renderHands() {
+    if (focus < 0) {
+      const sig = 'ghost';
+      if (sig === handsSig) return;
+      handsSig = sig;
+      handsEl.innerHTML = `<div class="slot" style="width:auto;padding:0 12px;cursor:pointer;color:#d9812b">👁️ Ghost Observer Mode · Click a villager or press P to possess · [V] Directory</div>`;
+      handsEl.querySelector('.slot').addEventListener('pointerdown', openInhabitants);
+      return;
+    }
     const h = hands(S, focus);
     if (selIdx >= h.length) selIdx = -1;
     const sig = h.map(t => t + ':' + S.tqty[t]).join(',') + '|' + selIdx;
@@ -3166,17 +3358,56 @@ function play(root, seed) {
     }
   }, { passive: false });
 
+  function openInhabitants() {
+    panelMode = 'inhabitants';
+    panelSel = 0;
+    const dir = read(S, 'directory') || [];
+    panelItems = [
+      ...dir.map(p => ({
+        label: `${p.kind > 0 ? '🐾' : '👤'} ${p.name} (${p.age}y) — ${p.act} @ (${p.x},${p.y})${p.id === focus ? ' [YOU]' : ''}`,
+        go: () => {
+          if (p.id === focus) {
+            closePanel();
+          } else {
+            possess(p.id);
+            closePanel();
+          }
+        }
+      })),
+      { label: focus >= 0 ? 'Release to Ghost Observer Mode' : 'Close', go: () => { if (focus >= 0) releaseToGhost(); closePanel(); } }
+    ];
+    renderPanel('Inhabitants of the Valley', `${dir.filter(d => d.kind === 0).length} villagers · ${dir.filter(d => d.kind > 0).length} creatures`);
+  }
+
   function openMenu() {
     panelMode = 'menu';
     panelSel = 0;
-    const isAuto = S.pplanner[focus] === 0;
-    panelItems = [
+    const isAuto = focus >= 0 && S.pplanner[focus] === 0;
+    panelItems = focus >= 0 ? [
       { label: 'What can I do here?', go: openActs },
       { label: 'Me', go: () => view('me') },
+      { label: 'Inhabitants Directory', go: openInhabitants },
       { label: 'Journal', go: () => view('journal') },
       { label: isAuto ? 'Autonomy: Auto-Pilot (ON)' : 'Autonomy: Direct Control (Manual)', go: () => { S.pplanner[focus] = isAuto ? 1 : 0; openMenu(); } },
+      { label: 'Release to Ghost Observer Mode', go: () => { releaseToGhost(); closePanel(); } },
       { label: 'Wait an hour', go: () => { inject(S, focus, { k: 'wait', min: 60 }); closePanel(); } },
       { label: 'Sleep till morning', go: () => { inject(S, focus, { k: 'sleep' }); closePanel(); } },
+      { label: 'Speed: ' + speed + '×', go: () => { speed = speed === 1 ? 10 : speed === 10 ? 60 : 1; openMenu(); } },
+      { label: 'Seed ' + S.seed, go: () => {} }
+    ] : [
+      { label: 'Inhabitants Directory', go: openInhabitants },
+      { label: 'Journal', go: () => view('journal') },
+      { label: 'Arrive as a new wanderer on the road', go: () => {
+        const roadY = S.H >> 1;
+        const newP = addPerson(S, { name: 'Traveler', x: 2, y: roadY, planner: 1 });
+        addThing(S, { stuff: 'knife', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'axe', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'waterskin', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'bread', qty: 1, holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'penny', qty: 5, holder: newP, holderKind: 1 });
+        possess(newP);
+        closePanel();
+      }},
       { label: 'Speed: ' + speed + '×', go: () => { speed = speed === 1 ? 10 : speed === 10 ? 60 : 1; openMenu(); } },
       { label: 'Seed ' + S.seed, go: () => {} }
     ];
@@ -3232,9 +3463,9 @@ function play(root, seed) {
   function openDeathScreen(cause, text) {
     panelMode = 'death';
     panelSel = 0;
-    const deadName = S.pname[focus];
-    const deadAge = ageYears(S, focus);
-    const home = S.phome[focus];
+    const deadName = focus >= 0 ? S.pname[focus] : 'Character';
+    const deadAge = focus >= 0 ? ageYears(S, focus) : 0;
+    const home = focus >= 0 ? S.phome[focus] : -1;
     const familyHeirs = home >= 0 ? household(S, home).filter(p => p !== focus && S.palive[p]) : [];
     const allLivingVillagers = [];
     for (let p = 0; p < S.pn; p++) {
@@ -3250,8 +3481,7 @@ function play(root, seed) {
       panelItems.push({
         label: `Continue as kin: ${S.pname[heir]} (${ageYears(S, heir)}y)`,
         go: () => {
-          focus = heir;
-          S.pplanner[heir] = 1;
+          possess(heir);
           closePanel();
           journal(S, `You continue your lineage as ${S.pname[heir]}.`);
         }
@@ -3263,8 +3493,7 @@ function play(root, seed) {
       panelItems.push({
         label: `Assume life of: ${S.pname[villager]} (${ageYears(S, villager)}y)`,
         go: () => {
-          focus = villager;
-          S.pplanner[villager] = 1;
+          possess(villager);
           closePanel();
           journal(S, `You take up the life of ${S.pname[villager]}.`);
         }
@@ -3282,7 +3511,7 @@ function play(root, seed) {
         addThing(S, { stuff: 'waterskin', holder: newP, holderKind: 1 });
         addThing(S, { stuff: 'bread', qty: 1, holder: newP, holderKind: 1 });
         addThing(S, { stuff: 'penny', qty: 5, holder: newP, holderKind: 1 });
-        focus = newP;
+        possess(newP);
         closePanel();
         journal(S, 'A new traveler arrives on the road with an axe and a loaf of bread.');
       }
@@ -3291,7 +3520,10 @@ function play(root, seed) {
     // 4. Observe
     panelItems.push({
       label: 'Observe the world in ghost mode',
-      go: closePanel
+      go: () => {
+        releaseToGhost();
+        closePanel();
+      }
     });
 
     renderPanel(`${deadName} has died`, `${text || 'Died'} at age ${deadAge}. Choose succession:`);
@@ -3328,27 +3560,22 @@ function play(root, seed) {
   function updateActivePanel() {
     if (!panelMode) return;
     if (panelMode === 'me') {
+      if (focus < 0) { closePanel(); return; }
       const me = read(S, { person: focus });
       const sub = panel.querySelector('.sub');
       if (sub) {
         sub.textContent = `${me.age} years · ${me.hours.toFixed(1)} h left today · ${me.act}`;
       }
       const bars = panel.querySelectorAll('.bar i');
-      if (bars && bars.length === 5) {
+      if (bars.length === 5 && me.needs) {
         for (let i = 0; i < 5; i++) {
-          bars[i].style.width = Math.max(0, Math.min(100, me.needs[i])).toFixed(1) + '%';
+          bars[i].style.width = (me.needs[i] | 0) + '%';
         }
       }
-    } else if (panelMode === 'menu') {
-      const sub = panel.querySelector('.sub');
-      if (sub) {
-        sub.textContent = 'day ' + (1 + dayOf(S.time)) + ', ' + ['winter', 'spring', 'summer', 'autumn'][Math.floor(((doyOf(S.time) + 45) % 360) / 90)];
-      }
-    } else if (panelMode === 'journal') {
-      if (lastJournalRendered !== S.journal.length) {
-        lastJournalRendered = S.journal.length;
-        panel.innerHTML = `<h2>Journal</h2><div class="sub"></div>` + S.journal.slice(-30).reverse().map(j => `<div class="row"><span class="k">d${1 + dayOf(j.t)} ${hhmm(j.t)}</span> ${j.text}</div>`).join('');
-      }
+    }
+    if (panelMode === 'journal' && S.journal.length !== lastJournalRendered) {
+      lastJournalRendered = S.journal.length;
+      view('journal');
     }
   }
 
@@ -3358,14 +3585,11 @@ function play(root, seed) {
   }
 
   function flushJournal() {
-    while (seenJournal < S.journal.length) {
-      const j = S.journal[seenJournal++];
-      if (!j.text.includes(S.pname[focus]) && !/finished|died|starved|came up/.test(j.text)) continue;
-      const d = document.createElement('div');
-      d.textContent = j.text;
-      toast.appendChild(d);
-      requestAnimationFrame(() => d.classList.add('on'));
-      setTimeout(() => { d.classList.remove('on'); setTimeout(() => d.remove(), 300); }, 2600);
+    if (S.journal.length > seenJournal) {
+      toast.textContent = S.journal[S.journal.length - 1].text;
+      toast.classList.add('on');
+      setTimeout(() => toast.classList.remove('on'), 3000);
+      seenJournal = S.journal.length;
     }
   }
 
@@ -3373,24 +3597,28 @@ function play(root, seed) {
   function frame(now) {
     const real = Math.max(0, Math.min(0.1, (now - last) / 1000));
     last = now;
-    const waiting = S.pbusyUntil[focus] - S.time > 30;
+    const waiting = focus >= 0 ? (S.pbusyUntil[focus] - S.time > 30) : false;
     const rate = waiting ? Math.max(speed, 600) : speed;
     step(S, S.time + real * rate);
 
     if (panelMode) release();
-    draw(S, focus, real, rate);
+    draw(S, focus, real, rate, camX, camY);
     flushJournal();
-    clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time) + (S.pplanner[focus] === 0 ? ' [auto]' : '');
+    clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time) + (focus < 0 ? ' [ghost]' : S.pplanner[focus] === 0 ? ' [auto]' : '');
     updateActivePanel();
     if (!panelMode || panelMode === 'me') renderHands();
 
-    {
+    if (focus >= 0) {
       const l = read(S, { acts: focus, slot: getSelectedThingId() });
       const a = l[0];
       hint.textContent = a ? a.label : '';
       hint.style.opacity = (a && !panelMode) ? 1 : 0;
+    } else {
+      hint.textContent = '👁️ Observer Mode · Click a person or press P to possess · [V] Directory';
+      hint.style.opacity = !panelMode ? 1 : 0;
     }
-    {
+
+    if (focus >= 0) {
       const busy = S.pbusyUntil[focus] - S.time;
       const span = S.pbusyUntil[focus] - S.pactStart[focus];
       if (busy > 0.01 && span > 0.05 && S.pact[focus] > ACT.walk) {
@@ -3401,6 +3629,8 @@ function play(root, seed) {
       } else {
         work.style.display = 'none';
       }
+    } else {
+      work.style.display = 'none';
     }
     requestAnimationFrame(frame);
   }
@@ -3411,32 +3641,41 @@ function play(root, seed) {
   // Injected Diagnostics & Telemetry
   if (typeof window !== 'undefined') {
     window.sim = Object.assign(window.sim || {}, {
-      S, player: focus,
+      S,
       getFocus: () => focus,
-      setFocus: (id) => { focus = id; },
+      setFocus: (id) => { possess(id); },
+      possess: (id) => possess(id),
+      releaseToGhost: () => releaseToGhost(),
       getSelSlot: () => getSelectedThingId(),
       setSelSlot: (s) => {
-        const h = hands(S, focus);
-        selIdx = h.indexOf(s);
+        if (focus >= 0) {
+          const h = hands(S, focus);
+          selIdx = h.indexOf(s);
+        } else {
+          selIdx = -1;
+        }
         renderHands();
       },
       getSpeed: () => speed,
       setSpeed: (sp) => { speed = sp; },
       inspect: () => {
-        const pState = read(S, { person: focus });
-        const availActs = read(S, { acts: focus, slot: getSelectedThingId() });
-        const facingTile = (() => {
+        const pState = focus >= 0 ? read(S, { person: focus }) : null;
+        const availActs = focus >= 0 ? read(S, { acts: focus, slot: getSelectedThingId() }) : [];
+        const facingTile = (focus >= 0) ? (() => {
           const [dx, dy] = DIRS[S.pface[focus]];
           const nx = S.px[focus] + dx, ny = S.py[focus] + dy;
           return (nx >= 0 && ny >= 0 && nx < S.W && ny < S.H) ? idx(S, nx, ny) : -1;
-        })();
+        })() : -1;
         const metrics = read(S, 'metrics');
+        const directory = read(S, 'directory');
         return {
           time: S.time,
           day: 1 + dayOf(S.time),
           doy: 1 + doyOf(S.time),
           year: 1 + yearOf(S.time),
-          player: {
+          focus,
+          directory,
+          player: focus >= 0 && pState ? {
             id: focus,
             name: S.pname[focus],
             alive: S.palive[focus],
@@ -3450,7 +3689,7 @@ function play(root, seed) {
             busyUntil: S.pbusyUntil[focus],
             isBusy: S.pbusyUntil[focus] > S.time,
             skills: S.pskills ? Array.from(S.pskills.slice(focus * 12, (focus + 1) * 12)) : []
-          },
+          } : null,
           affordances: availActs,
           facingTile: facingTile >= 0 ? { index: facingTile, type: S.tiles[facingTile], inspect: read(S, { inspect: facingTile, person: focus }) } : null,
           metrics,

@@ -1106,12 +1106,41 @@ function evalHutConstruction(sim, personId, home, isAtHome, toHome, dropToStore,
 function evalSpadeCrafting(sim, personId, hasHut) {
   if (held(sim, 1, personId, 'spade') < 0 && held(sim, 1, personId, 'knife') >= 0) {
     if (held(sim, 1, personId, 'log') >= 0) return { k: 'act', slot: held(sim, 1, personId, 'log'), act: 'whittle' };
-    if (hasHut && held(sim, 1, personId, 'axe') >= 0) {
+    if (held(sim, 1, personId, 'axe') >= 0) {
       const tree = nearestTile(sim, personId, (x, y, i) => sim.tiles[i] === T.tree, 28, 1);
       if (tree >= 0) return goAct(sim, personId, tree, 'chop', held(sim, 1, personId, 'axe'));
     }
   }
   return null;
+}
+
+function evalHomesteadDrive(sim, personId) {
+  if (sim.phome[personId] >= 0 || sim.pkind[personId] > 0) return null;
+
+  // Search for an open, unowned grass tile
+  const nearGrass = nearestTile(sim, personId, (x, y, i) => {
+    if (sim.tiles[i] !== T.grass) return false;
+    for (let h = 0; h < sim.households.length; h++) {
+      const hx = sim.households[h].home % sim.W;
+      const hy = (sim.households[h].home / sim.W) | 0;
+      if (Math.abs(x - hx) + Math.abs(y - hy) < 8) return false;
+    }
+    return true;
+  }, 32);
+
+  if (nearGrass >= 0) {
+    const gx = nearGrass % sim.W;
+    const gy = (nearGrass / sim.W) | 0;
+    const isAdjacent = Math.abs(sim.px[personId] - gx) + Math.abs(sim.py[personId] - gy) <= 1;
+    if (isAdjacent) {
+      sim.phome[personId] = nearGrass;
+      sim.households.push({ home: nearGrass, founded: sim.time });
+      journal(sim, `${sim.pname[personId]} staked a homestead claim.`);
+      return { k: 'wait', min: 30, act: ACT.idle };
+    }
+    return { k: 'go', to: adjacentFree(sim, gx, gy, sim.px[personId], sim.py[personId]) };
+  }
+  return { k: 'move', d: sim.rng.int(4) };
 }
 
 function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
@@ -1143,7 +1172,7 @@ function evalMarketTrade(sim, personId, home, isAtHome, toHome, members) {
         if (storeGrain >= 0 && isAtHome) return { k: 'take', t: storeGrain, qty: 20 };
         if (storeGrain >= 0) return toHome;
       }
-    } else if (barnDays < 60 && count(sim, 1, personId, 'penny') >= 5) {
+    } else if (barnDays < 60 && count(sim, 1, personId, 'penny') >= 2) {
       let sellerId = -1;
       let bestDist = 1e9;
       for (let q = 0; q < sim.pn; q++) {
@@ -1238,7 +1267,10 @@ function heuristic(sim, personId) {
   if (childIntent) return childIntent;
 
   const home = sim.phome[personId];
-  if (home < 0) return { k: 'wait', min: 30, act: ACT.idle };
+  if (home < 0) {
+    const homesteadIntent = evalHomesteadDrive(sim, personId);
+    return homesteadIntent || { k: 'wait', min: 30, act: ACT.idle };
+  }
 
   const homeX = home % sim.W;
   const homeY = (home / sim.W) | 0;
@@ -2247,6 +2279,29 @@ function read(sim, query) {
       deaths: Object.assign({}, sim.deaths), hours: Array.from(sim.hoursByAct),
       rain: sim.rain[yearOf(sim.time)] || 1
     };
+  }
+  if (query === 'directory' || query.directory) {
+    const list = [];
+    for (let p = 0; p < sim.pn; p++) {
+      if (!sim.palive[p]) continue;
+      const b = p * 5;
+      const inventory = hands(sim, p).map(t => ({ id: t, name: DATA.STUFF[sim.tstuff[t]].name, qty: sim.tqty[t], kind: DATA.STUFF[sim.tstuff[t]].kind }));
+      list.push({
+        id: p,
+        name: sim.pname[p],
+        age: ageYears(sim, p) | 0,
+        kind: sim.pkind[p],
+        kindName: sim.pkind[p] > 0 ? DATA.BEASTS[sim.pkind[p]] : 'Villager',
+        x: sim.px[p],
+        y: sim.py[p],
+        act: DATA.ACTS[sim.pact[p]] || 'idle',
+        needs: Array.from(sim.pneeds.slice(b, b + 5)),
+        hands: inventory,
+        home: sim.phome[p],
+        planner: sim.pplanner[p]
+      });
+    }
+    return list;
   }
   if (query.person !== undefined && query.acts === undefined && query.inspect === undefined) {
     const p = query.person;
