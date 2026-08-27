@@ -497,6 +497,10 @@ function play(root, seed) {
       e.preventDefault();
       if (panelMode) { if (!e.repeat) panelNav(KEYS[e.code]); }
       else if (!e.repeat) hold(KEYS[e.code]);
+    } else if (e.code === 'KeyZ') {
+      e.preventDefault();
+      S.pplanner[focus] = S.pplanner[focus] === 1 ? 0 : 1;
+      journal(S, S.pplanner[focus] === 0 ? 'Autonomous AI auto-pilot engaged.' : 'Direct manual control restored.');
     } else if (e.code === 'KeyE' || e.code === 'Space') {
       e.preventDefault();
       actA();
@@ -560,10 +564,12 @@ function play(root, seed) {
   function openMenu() {
     panelMode = 'menu';
     panelSel = 0;
+    const isAuto = S.pplanner[focus] === 0;
     panelItems = [
       { label: 'What can I do here?', go: openActs },
       { label: 'Me', go: () => view('me') },
       { label: 'Journal', go: () => view('journal') },
+      { label: isAuto ? 'Autonomy: Auto-Pilot (ON)' : 'Autonomy: Direct Control (Manual)', go: () => { S.pplanner[focus] = isAuto ? 1 : 0; openMenu(); } },
       { label: 'Wait an hour', go: () => { inject(S, focus, { k: 'wait', min: 60 }); closePanel(); } },
       { label: 'Sleep till morning', go: () => { inject(S, focus, { k: 'sleep' }); closePanel(); } },
       { label: 'Speed: ' + speed + '×', go: () => { speed = speed === 1 ? 10 : speed === 10 ? 60 : 1; openMenu(); } },
@@ -587,7 +593,7 @@ function play(root, seed) {
       const content = DATA.NEEDS.map((n, i) => `<div class="row"><span class="k">${n.padEnd(8)}</span><span class="bar"><i style="width:${me.needs[i] | 0}%"></i></span></div>`).join('')
         + (woundRows ? `<div class="row" style="margin-top:6px;font-weight:bold;color:#ef4444">Injuries:</div>${woundRows}` : '')
         + (skillRows ? `<div class="row" style="margin-top:6px;font-weight:bold">Skills:</div>${skillRows}` : '');
-      renderPanel(me.name, `${me.age} years · ${me.hours.toFixed(1)} h left today · ${me.act}`, content);
+      renderPanel(me.name, `${me.age} years · ${me.hours.toFixed(1)} h left today · ${me.act}${S.pplanner[focus] === 0 ? ' (autonomous)' : ''}`, content);
     }
     if (which === 'journal') {
       renderPanel('Journal', '', S.journal.slice(-30).reverse().map(j => `<div class="row"><span class="k">d${1 + dayOf(j.t)} ${hhmm(j.t)}</span> ${j.text}</div>`).join(''));
@@ -618,8 +624,77 @@ function play(root, seed) {
     renderPanel('Hut', items.length ? '' : 'Empty.');
   }
 
+  function openDeathScreen(cause, text) {
+    panelMode = 'death';
+    panelSel = 0;
+    const deadName = S.pname[focus];
+    const deadAge = ageYears(S, focus);
+    const home = S.phome[focus];
+    const familyHeirs = home >= 0 ? household(S, home).filter(p => p !== focus && S.palive[p]) : [];
+    const allLivingVillagers = [];
+    for (let p = 0; p < S.pn; p++) {
+      if (S.palive[p] && S.pkind[p] === 0 && p !== focus && !familyHeirs.includes(p)) {
+        allLivingVillagers.push(p);
+      }
+    }
+
+    panelItems = [];
+
+    // 1. Kin / Household Inheritance
+    for (const heir of familyHeirs) {
+      panelItems.push({
+        label: `Continue as kin: ${S.pname[heir]} (${ageYears(S, heir)}y)`,
+        go: () => {
+          focus = heir;
+          S.pplanner[heir] = 1;
+          closePanel();
+          journal(S, `You continue your lineage as ${S.pname[heir]}.`);
+        }
+      });
+    }
+
+    // 2. Villager Perspective
+    for (const villager of allLivingVillagers.slice(0, 3)) {
+      panelItems.push({
+        label: `Assume life of: ${S.pname[villager]} (${ageYears(S, villager)}y)`,
+        go: () => {
+          focus = villager;
+          S.pplanner[villager] = 1;
+          closePanel();
+          journal(S, `You take up the life of ${S.pname[villager]}.`);
+        }
+      });
+    }
+
+    // 3. New Wanderer
+    panelItems.push({
+      label: 'Arrive as a new wanderer on the road',
+      go: () => {
+        const roadY = S.H >> 1;
+        const newP = addPerson(S, { name: 'Traveler', x: 2, y: roadY, planner: 1 });
+        addThing(S, { stuff: 'knife', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'axe', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'waterskin', holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'bread', qty: 1, holder: newP, holderKind: 1 });
+        addThing(S, { stuff: 'penny', qty: 5, holder: newP, holderKind: 1 });
+        focus = newP;
+        closePanel();
+        journal(S, 'A new traveler arrives on the road with an axe and a loaf of bread.');
+      }
+    });
+
+    // 4. Observe
+    panelItems.push({
+      label: 'Observe the world in ghost mode',
+      go: closePanel
+    });
+
+    renderPanel(`${deadName} has died`, `${text || 'Died'} at age ${deadAge}. Choose succession:`);
+  }
+
   S.onMeet = (a, b) => { if (a === focus && b !== focus) openTalk(b); else if (b === focus && a !== focus) openTalk(a); };
   S.onOpen = (p, r) => { if (p !== focus) return; if (r.open === 'site') openSite(r.site); else if (r.open === 'inspect') openInspect(r.site); };
+  S.onDeath = (p, cause, text) => { if (p === focus) openDeathScreen(cause, text); };
 
   function renderPanel(title, sub, body) {
     panel.classList.add('on');
@@ -700,7 +775,7 @@ function play(root, seed) {
     if (panelMode) release();
     draw(S, focus, real, rate);
     flushJournal();
-    clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time);
+    clock.textContent = 'day ' + (1 + dayOf(S.time)) + ' ' + hhmm(S.time) + (S.pplanner[focus] === 0 ? ' [auto]' : '');
     updateActivePanel();
     if (!panelMode || panelMode === 'me') renderHands();
 

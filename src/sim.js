@@ -2032,7 +2032,7 @@ function die(sim, personId, cause, text) {
       journal(sim, 'The claim stands empty.');
     }
   }
-  if (sim.onDeath) sim.onDeath(personId);
+  if (sim.onDeath) sim.onDeath(personId, cause, text);
 }
 
 

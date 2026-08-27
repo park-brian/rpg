@@ -92,3 +92,43 @@ test('Action Spans & Cancellation: Walking away interrupts work without progress
   assert.strictEqual(S.tiles[tree], T.tree, 'Tree remained standing after interruption');
   assert.strictEqual(count(S, 1, me, 'log'), 0, 'No logs granted from interrupted work');
 });
+
+test('Autonomy Mode: Player character can toggle to autonomous AI heuristic control', () => {
+  const { S, player } = makeWorld(77);
+  assert.strictEqual(S.pplanner[player], 1, 'Player starts in direct control mode');
+
+  // Toggle to autonomous mode
+  S.pplanner[player] = 0;
+  S.pneeds[player * 5] = 20; // Critical hunger
+
+  // Autonomous planner chooses self-preservation action
+  const nextPlan = plan(S, player);
+  assert.ok(nextPlan !== null, 'Autonomous mode produces intent');
+  assert.strictEqual(nextPlan.act, 'eat', 'Autonomous character eats held bread');
+
+  // Step simulation under autonomy
+  step(S, S.time + 10);
+  assert.ok(S.pneeds[player * 5] > 50, 'Autonomous character restored hunger');
+});
+
+test('Death & Succession Notification: onDeath fires on fatal events with cause', () => {
+  const { S, player } = makeWorld(88);
+  let deathFired = false;
+  let deadPerson = -1;
+  let deathCause = '';
+
+  S.onDeath = (p, cause, text) => {
+    deathFired = true;
+    deadPerson = p;
+    deathCause = cause;
+  };
+
+  // Deplete hunger to 0
+  S.pneeds[player * 5] = 0;
+  step(S, S.time + 70); // Trigger needs check
+
+  assert.strictEqual(deathFired, true, 'onDeath callback must fire on death');
+  assert.strictEqual(deadPerson, player, 'Dead person matches player');
+  assert.strictEqual(deathCause, 'starved', 'Cause is starvation');
+  assert.strictEqual(S.palive[player], 0, 'Player marked not alive');
+});
