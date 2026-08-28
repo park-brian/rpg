@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const screenshotDir = path.join(__dirname, '..', '..', 'artifacts', 'screenshots');
 
-test('Default Startup / with 40-Year Genesis Screen and Transition', async ({ page }) => {
-  test.setTimeout(120000);
+test('Default Startup / with 10-Year Genesis Screen and Transition', async ({ page }) => {
+  test.setTimeout(60000);
 
   const errors = [];
   page.on('pageerror', err => {

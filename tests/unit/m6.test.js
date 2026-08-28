@@ -17,7 +17,7 @@ test('M6: Line-of-Sight (LOS) Field of View calculation', () => {
   assert.equal(los[py * S.W + px], 1, 'Player current tile is fully visible');
 });
 
-test('M6: 40-Year Headless Pre-Roll Wanderer Start Flow', () => {
+test('M6: 10-Year Headless Pre-Roll Wanderer Start Flow', () => {
   assert.strictEqual(typeof makeWorldWanderer, 'function', 'makeWorldWanderer function must exist');
 
   const { S, player } = makeWorldWanderer(602, 10); // 10-year pre-roll

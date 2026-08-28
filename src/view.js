@@ -1139,7 +1139,7 @@ function createGenesisWorker() {
 
 function play(root, seed, opts = {}) {
   const q = new URLSearchParams(typeof location !== 'undefined' ? (location.search || '').replace(/^\?/, '') : '');
-  const preroll = opts.preroll !== undefined ? opts.preroll : (q.has('preroll') ? +q.get('preroll') : (q.has('years') ? +q.get('years') : 40));
+  const preroll = opts.preroll !== undefined ? opts.preroll : (q.has('preroll') ? +q.get('preroll') : (q.has('years') ? +q.get('years') : 10));
 
   if (preroll <= 0) {
     const { S, player } = makeWorld(seed);
@@ -1150,7 +1150,7 @@ function play(root, seed, opts = {}) {
   root.innerHTML = `
     <div id="genesis" style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;background:var(--ink);color:var(--parch);padding:24px;text-align:center;">
       <h1 style="font-size:26px;color:var(--ember);margin-bottom:6px;letter-spacing:3px;">FORD</h1>
-      <p style="font-style:italic;color:var(--parch2);margin-bottom:28px;">Forty years have passed in the valley...</p>
+      <p style="font-style:italic;color:var(--parch2);margin-bottom:28px;">${preroll === 10 ? 'Ten' : preroll} years have passed in the valley...</p>
       
       <div style="width:340px;max-width:90%;background:var(--ink2);border:1px solid #3a4150;border-radius:6px;padding:14px;margin-bottom:16px;">
         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px;">

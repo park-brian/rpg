@@ -2972,7 +2972,7 @@ function generateWorldChunk(seed, cx, cy) {
   return chunk;
 }
 
-function makeWorldWanderer(seed, prerollYears = 40) {
+function makeWorldWanderer(seed, prerollYears = 10) {
   const { S, home } = makeWorld(seed, false);
   const YEAR = DATA.DAYS_PER_YEAR * 1440;
   if (prerollYears > 0) {
@@ -2991,7 +2991,7 @@ function makeWorldWanderer(seed, prerollYears = 40) {
   return { S, player, home };
 }
 
-async function makeWorldWandererAsync(seed, prerollYears = 40, onProgress = null) {
+async function makeWorldWandererAsync(seed, prerollYears = 10, onProgress = null) {
   const { S, home } = makeWorld(seed, false);
   const YEAR = DATA.DAYS_PER_YEAR * 1440;
 
