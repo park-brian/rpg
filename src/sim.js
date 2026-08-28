@@ -2999,7 +2999,7 @@ async function makeWorldWandererAsync(seed, prerollYears = 40, onProgress = null
     step(S, S.time + YEAR);
     if (onProgress) {
       const m = read(S, 'metrics');
-      const recentJournals = S.journal.slice(-4);
+      const recentJournals = S.journal.slice(-4).map(j => typeof j === 'object' ? (j.text || '') : String(j || ''));
       onProgress({ year: y, totalYears: prerollYears, metrics: m, journals: recentJournals, sim: S });
       await new Promise(resolve => setTimeout(resolve, 0));
     }

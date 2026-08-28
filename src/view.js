@@ -1,8 +1,9 @@
 import {
   DATA, T, ACT, DIRS, MAXP, MAXT,
   idx, tileAt, count, held, hands, moveThing, ageYears,
-  read, inject, step, cancelAct, hash, makeWorld, makeWorldWanderer,
-  generateWorldChunk, dayOf, yearOf, doyOf, season, journal
+  read, inject, step, cancelAct, hash, makeWorld, makeWorldWanderer, makeWorldWandererAsync,
+  generateWorldChunk, dayOf, yearOf, doyOf, season, journal,
+  createSim, loadState, saveState
 } from './sim.js';
 
 const TILE_SIZE = 16;
@@ -168,12 +169,14 @@ function makeRenderer(canvas) {
   let VIEW_H = 13;
 
   function resize() {
-    const box = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
-    const cw = Math.max(1, box.width);
-    const ch = Math.max(1, box.height);
+    const box = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { width: 0, height: 0 };
+    const winW = (typeof window !== 'undefined' && window.innerWidth > 0) ? window.innerWidth : 800;
+    const winH = (typeof window !== 'undefined' && window.innerHeight > 0) ? window.innerHeight : 600;
+    const cw = box.width > 20 ? box.width : winW;
+    const ch = box.height > 20 ? box.height : winH;
     const scale = cw < 600 ? (cw < 360 ? 1 : 2) : (cw < 1600 ? 2 : 3);
-    VIEW_W = Math.ceil(cw / (TS * scale));
-    VIEW_H = Math.ceil(ch / (TS * scale));
+    VIEW_W = Math.max(10, Math.ceil(cw / (TS * scale)));
+    VIEW_H = Math.max(8, Math.ceil(ch / (TS * scale)));
     canvas.width = VIEW_W * TS;
     canvas.height = VIEW_H * TS;
     canvas.style.width = '100%';
@@ -506,7 +509,11 @@ function initGame(root, S, player) {
     panelSel = 0;
     const d = read(S, { inspect: tileIndex, person: focus >= 0 ? focus : -1 });
     panelItems = [{ label: 'Close', go: closePanel }];
-    renderPanel(d.title, '', d.lines.map(([k, v]) => `<div class="row"><span class="k">${k.padEnd(10)}</span>${v}</div>`).join('') + `<div class="row sel" data-i="0">Close</div>`);
+    const linesHtml = (d.lines || []).map(([k, v]) => {
+      const valStr = typeof v === 'object' ? (Array.isArray(v) ? v.join(', ') : JSON.stringify(v)) : String(v ?? '');
+      return `<div class="row"><span class="k">${String(k).padEnd(10)}</span>${valStr}</div>`;
+    }).join('');
+    renderPanel(d.title || 'Inspect', '', linesHtml + `<div class="row sel" data-i="0">Close</div>`);
   }
 
   const dirName = (d) => ['south', 'north', 'west', 'east'][d];
@@ -785,7 +792,11 @@ function initGame(root, S, player) {
       renderPanel(me.name, `${me.age} years · ${me.hours.toFixed(1)} h left today · ${me.act}${S.pplanner[focus] === 0 ? ' (autonomous)' : ''}`, content);
     }
     if (which === 'journal') {
-      renderPanel('Journal', '', S.journal.slice(-30).reverse().map(j => `<div class="row"><span class="k">d${1 + dayOf(j.t)} ${hhmm(j.t)}</span> ${j.text}</div>`).join(''));
+      renderPanel('Journal', '', S.journal.slice(-30).reverse().map(j => {
+        const text = typeof j === 'object' ? (j.text || '') : String(j || '');
+        const time = typeof j === 'object' && j.t !== undefined ? j.t : S.time;
+        return `<div class="row"><span class="k">d${1 + dayOf(time)} ${hhmm(time)}</span> ${text}</div>`;
+      }).join(''));
     }
   }
 
@@ -939,7 +950,8 @@ function initGame(root, S, player) {
 
   function flushJournal() {
     if (S.journal.length > seenJournal) {
-      toast.textContent = S.journal[S.journal.length - 1].text;
+      const entry = S.journal[S.journal.length - 1];
+      toast.textContent = typeof entry === 'object' ? (entry.text || '') : String(entry || '');
       toast.classList.add('on');
       setTimeout(() => toast.classList.remove('on'), 3000);
       seenJournal = S.journal.length;
@@ -1097,7 +1109,7 @@ function createGenesisWorker() {
             if (now - lastPost > 20 || y === prerollYears) {
               lastPost = now;
               const m = read(S, 'metrics');
-              const recentJournals = S.journal.slice(-4);
+              const recentJournals = S.journal.slice(-4).map(j => typeof j === 'object' ? (j.text || '') : String(j || ''));
               self.postMessage({ type: 'PROGRESS', year: y, totalYears: prerollYears, metrics: m, journals: recentJournals });
             }
           }
@@ -1179,7 +1191,10 @@ function play(root, seed, opts = {}) {
     if (hutsEl) hutsEl.textContent = progress.metrics.huts;
     if (grainEl) grainEl.textContent = progress.metrics.grain.toLocaleString();
     if (chronicleEl && progress.journals && progress.journals.length) {
-      chronicleEl.innerHTML = progress.journals.map(j => `<div>${j}</div>`).join('');
+      chronicleEl.innerHTML = progress.journals.map(j => {
+        const text = typeof j === 'object' ? (j.text || '') : String(j || '');
+        return `<div>${text}</div>`;
+      }).join('');
     }
   };
 

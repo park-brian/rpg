@@ -26,7 +26,7 @@ test.describe('Ford Simulation & Game E2E Browser Suite', () => {
   });
 
   test('Index page loads with canvas and control pads', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?preroll=0');
 
     // Verify main container and canvas render
     const canvas = page.locator('canvas#c');
@@ -43,7 +43,7 @@ test.describe('Ford Simulation & Game E2E Browser Suite', () => {
   });
 
   test('Interactive D-Pad and Keyboard navigation & Affordance Panel', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?preroll=0');
 
     // Press D to step East
     await page.keyboard.press('KeyD');
@@ -67,7 +67,7 @@ test.describe('Ford Simulation & Game E2E Browser Suite', () => {
   });
 
   test('Menu panel views: Me, Journal, and Speed controls', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?preroll=0');
 
     // Click menu button
     await page.click('#menubtn');
